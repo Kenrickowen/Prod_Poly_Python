@@ -103,8 +103,25 @@ class Trade:
     token_id: str
     price: float  # odds at entry
     size: float   # spend amount
+    condition_id: str = ""
+    market_slug: str = ""
+    order_id: str = ""
+    signal_reason: str = ""
+    signal_trend: str = ""
+    signal_ptb: float = 0.0
+    trigger_open: float = 0.0
+    trigger_close: float = 0.0
+    trigger_high: float = 0.0
+    trigger_low: float = 0.0
+    trigger_time_ms: int = 0
+    token_id_up: str = ""
+    token_id_down: str = ""
+    neg_risk: bool = False
     pnl: float = 0.0
     settled: bool = False
+    redemption_tx: str = ""
+    redemption_error: str = ""
+    redemption_checked_ms: int = 0
 
 
 @dataclass
@@ -118,6 +135,18 @@ class AppState:
     chainlink_price: Optional[float] = None
     poly_up_odds: Optional[float] = None
     poly_down_odds: Optional[float] = None
+    poly_market_slug: str = ""
+    poly_market_question: str = ""
+    poly_market_condition_id: str = ""
+    poly_market_neg_risk: bool = False
+
+    wallet_address: str = ""
+    wallet_pol_balance: Optional[float] = None
+    wallet_usdc_balance: Optional[float] = None
+    wallet_usdce_balance: Optional[float] = None
+    wallet_pusd_balance: Optional[float] = None
+    wallet_balance_error: str = ""
+    last_wallet_balance_time_ms: int = 0
 
     trades_placed: int = 0
     initial_balance: float = 10_000.0
@@ -129,6 +158,10 @@ class AppState:
 
     last_kline_time_ms: int = 0
     last_ticker_time_ms: int = 0
+    last_poly_odds_time_ms: int = 0
+    last_signal_check_ms: int = 0
+    last_signal_status: str = ""
+    last_signal_reason: str = ""
 
     def push_kline(self, candle: Candle) -> None:
         existing = next((i for i, c in enumerate(self.klines) if c.open_time_ms == candle.open_time_ms), -1)
@@ -136,7 +169,7 @@ class AppState:
             self.klines[existing] = candle
         else:
             self.klines.append(candle)
-            if len(self.klines) > 24:
+            if len(self.klines) > 120:
                 self.klines.pop(0)
 
     def add_trade(self, trade: Trade) -> None:

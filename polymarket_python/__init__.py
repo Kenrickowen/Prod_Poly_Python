@@ -13,6 +13,8 @@ from polymarket_python.bybit_client import BybitClient
 try:
     from polymarket_python.trader import Trader
     from polymarket_python.polymarket_client import PolymarketClient
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name not in {"py_clob_client", "py_order_utils"}:
+        raise
     Trader = None
     PolymarketClient = None

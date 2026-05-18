@@ -11,7 +11,11 @@ BINANCE_REST_URL = "https://api.binance.com/api/v3"
 
 # ─── Bybit WebSocket ─────────────────────────────────────────────────────────
 BYBIT_WS_URL = os.getenv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/linear")
+BYBIT_REST_URL = os.getenv("BYBIT_REST_URL", "https://api.bybit.com")
 BYBIT_SYMBOL = os.getenv("BYBIT_SYMBOL", "BTCUSDT")
+
+# ─── Polymarket public odds polling ──────────────────────────────────────────
+POLY_ODDS_POLL_SECS = float(os.getenv("POLY_ODDS_POLL_SECS", "5"))
 
 # ─── Chainlink BTC/USD on Polygon ────────────────────────────────────────────
 CHAINLINK_BTC_FEED = "0x1B44F3514812d835EB1BDB0acB33d3fA3351Ee43"
@@ -68,7 +72,29 @@ BINANCE_SEED_CANDLES = 15
 
 # ─── RPC ─────────────────────────────────────────────────────────────────────
 INFURA_URL = os.getenv("INFURA_URL", "")
+WALLET_BALANCE_POLL_SECS = float(os.getenv("WALLET_BALANCE_POLL_SECS", "60"))
+
+# ─── Polymarket CTF redemption ───────────────────────────────────────────────
+POLYMARKET_PUSD = os.getenv("POLYMARKET_PUSD", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
+POLYMARKET_USDCE = os.getenv("POLYMARKET_USDCE", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+POLYMARKET_USDC = os.getenv("POLYMARKET_USDC", "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359")
+POLYMARKET_CTF = os.getenv("POLYMARKET_CTF", "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+POLYMARKET_CTF_COLLATERAL_ADAPTER = os.getenv(
+    "POLYMARKET_CTF_COLLATERAL_ADAPTER",
+    "0xAdA100Db00Ca00073811820692005400218FcE1f",
+)
+POLYMARKET_NEG_RISK_CTF_COLLATERAL_ADAPTER = os.getenv(
+    "POLYMARKET_NEG_RISK_CTF_COLLATERAL_ADAPTER",
+    "0xadA2005600Dec949baf300f4C6120000bDB6eAab",
+)
+REDEMPTION_ENABLED = os.getenv("REDEMPTION_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+REDEMPTION_POLL_SECS = float(os.getenv("REDEMPTION_POLL_SECS", "30"))
+REDEMPTION_MAX_GAS_GWEI = float(os.getenv("REDEMPTION_MAX_GAS_GWEI", "250"))
+REDEMPTION_GAS_LIMIT = int(os.getenv("REDEMPTION_GAS_LIMIT", "350000"))
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8080"))
+
+# ─── Persistence ─────────────────────────────────────────────────────────────
+TRADE_HISTORY_CSV = os.getenv("TRADE_HISTORY_CSV", "data/trade_history.csv")

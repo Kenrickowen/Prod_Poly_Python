@@ -5,6 +5,7 @@ import time
 from polymarket_python.models import AppState, Signal, SignalDirection, Trade
 from polymarket_python.polymarket_client import PolymarketClient
 from polymarket_python.config import CAPITAL, POSITION_FRACTION
+from polymarket_python.trade_store import append_trade
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +42,35 @@ class Trader:
         result = await self.client.place_order(token_id, side, size, odds)
 
         if result:
+            order_id = ""
+            if isinstance(result, dict):
+                order_id = str(result.get("orderID") or result.get("orderId") or result.get("id") or "")
+            trigger = signal.trigger_candle
             trade = Trade(
                 timestamp_ms=int(time.time() * 1000),
                 direction=direction,
                 token_id=token_id,
                 price=odds,
                 size=size,
+                condition_id=state.poly_market_condition_id,
+                market_slug=state.poly_market_slug,
+                order_id=order_id,
+                signal_reason=signal.reason,
+                signal_trend=signal.trend,
+                signal_ptb=signal.ptb_used,
+                trigger_open=trigger.open if trigger else 0.0,
+                trigger_close=trigger.close if trigger else 0.0,
+                trigger_high=trigger.high if trigger else 0.0,
+                trigger_low=trigger.low if trigger else 0.0,
+                trigger_time_ms=trigger.open_time_ms if trigger else 0,
+                token_id_up=self.token_id_up,
+                token_id_down=self.token_id_down,
+                neg_risk=state.poly_market_neg_risk,
                 pnl=0.0,
                 settled=False,
             )
             state.add_trade(trade)
+            append_trade(trade)
             state.window.traded = True
             state.window.signal_evaluated = True
             logger.info(f"[TRADER] Trade SUCCESS — {direction.value}")

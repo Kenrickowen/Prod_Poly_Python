@@ -24,6 +24,9 @@ from polymarket_python.config import (
     DASHBOARD_HOST,
     DASHBOARD_PORT,
     GAMMA_HOST,
+    REDEMPTION_ENABLED,
+    REDEMPTION_POLL_SECS,
+    WALLET_BALANCE_POLL_SECS,
     WINDOW_MINUTES,
 )
 from polymarket_python.models import AppState, Candle
@@ -45,6 +48,10 @@ from polymarket_python.scheduler import (
 )
 from polymarket_python.trader import Trader
 from polymarket_python.dashboard import Dashboard
+from polymarket_python.polymarket_public_client import fetch_current_btc_odds
+from polymarket_python.redemption import PolymarketRedeemer, now_ms
+from polymarket_python.trade_store import load_trade_history, save_trade_history
+from polymarket_python.wallet_balances import WalletBalanceClient
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +126,16 @@ async def poll_price_fallback(state: AppState) -> None:
         logger.info(f"[FALLBACK] BTC price = ${price:,.2f} (CoinGecko)")
 
 
+def apply_wallet_balances(state: AppState, balances) -> None:
+    state.wallet_address = balances.address
+    state.wallet_pol_balance = balances.pol
+    state.wallet_usdc_balance = balances.usdc
+    state.wallet_usdce_balance = balances.usdce
+    state.wallet_pusd_balance = balances.pusd
+    state.last_wallet_balance_time_ms = balances.timestamp_ms
+    state.wallet_balance_error = ""
+
+
 async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -136,6 +153,10 @@ async def main() -> None:
     # Auto-fetch market token IDs (or use env vars as fallback)
     token_id_up = os.getenv("TOKEN_ID_UP", "")
     token_id_down = os.getenv("TOKEN_ID_DOWN", "")
+    market_mid = None
+    state = AppState()
+    state.trade_history = load_trade_history()
+    state.trades_placed = len(state.trade_history)
 
     if not token_id_up or not token_id_down:
         logger.info("[MAIN] TOKEN_ID not set — fetching active BTC market from Gamma API...")
@@ -143,20 +164,22 @@ async def main() -> None:
         if not token_id_up or not token_id_down:
             logger.error("[MAIN] Could not resolve market token IDs. Set TOKEN_ID_UP and TOKEN_ID_DOWN in .env")
             sys.exit(1)
-        # Use market mid as initial BTC price fallback
-        if market_mid:
-            state = AppState()
-            state.last_price = market_mid
     else:
         logger.info(f"[MAIN] Using TOKEN_ID from .env: UP={token_id_up}, DOWN={token_id_down}")
-        state = AppState()
-
-    # Initialize shared state
-    state = AppState()
 
     # If we have market mid from auto-fetch, seed last_price
     if market_mid:
         state.last_price = market_mid
+
+    initial_market, initial_up_odds, initial_down_odds = await fetch_current_btc_odds()
+    if initial_market:
+        token_id_up, token_id_down = initial_market.token_id_up, initial_market.token_id_down
+        state.poly_market_slug = initial_market.slug
+        state.poly_market_question = initial_market.question
+        state.poly_market_condition_id = initial_market.condition_id
+        state.poly_market_neg_risk = initial_market.neg_risk
+        state.poly_up_odds = initial_up_odds
+        state.poly_down_odds = initial_down_odds
 
     # Initialize Polymarket client
     poly_client = PolymarketClient()
@@ -211,6 +234,36 @@ async def main() -> None:
 
     fallback_task = asyncio.create_task(poll_fallback_prices())
 
+    async def poll_wallet_balances() -> None:
+        try:
+            balance_client = WalletBalanceClient()
+        except Exception as e:
+            state.wallet_balance_error = str(e)
+            logger.warning("[WALLET] balance poll disabled: %s", e)
+            dashboard.broadcast(dashboard._state_snapshot())
+            return
+
+        while True:
+            try:
+                balances = await asyncio.to_thread(balance_client.fetch)
+                apply_wallet_balances(state, balances)
+                state.current_balance = balances.pusd
+                dashboard.broadcast(dashboard._state_snapshot())
+                logger.info(
+                    "[WALLET] POL=%.6f USDC=%.2f USDC.e=%.2f pUSD=%.2f",
+                    balances.pol,
+                    balances.usdc,
+                    balances.usdce,
+                    balances.pusd,
+                )
+            except Exception as e:
+                state.wallet_balance_error = str(e)
+                dashboard.broadcast(dashboard._state_snapshot())
+                logger.warning("[WALLET] balance poll failed: %s", e)
+            await asyncio.sleep(WALLET_BALANCE_POLL_SECS)
+
+    wallet_task = asyncio.create_task(poll_wallet_balances())
+
     # Chainlink poll task
     async def poll_chainlink() -> None:
         while True:
@@ -263,10 +316,35 @@ async def main() -> None:
                 else:
                     logger.warning("[WINDOW] Could not fetch new market — keeping old token IDs")
 
+            market, odds_up, odds_down = await fetch_current_btc_odds()
+            if market:
+                state.poly_market_slug = market.slug
+                state.poly_market_question = market.question
+                state.poly_market_condition_id = market.condition_id
+                state.poly_market_neg_risk = market.neg_risk
+                if market.token_id_up != token_id_up or market.token_id_down != token_id_down:
+                    token_id_up, token_id_down = market.token_id_up, market.token_id_down
+                    trader.token_id_up = token_id_up
+                    trader.token_id_down = token_id_down
+                    poly_client.stop_ws_feed()
+                    poly_client.start_ws_feed([token_id_up, token_id_down])
+                    logger.info(f"[WINDOW] Synced market: UP={token_id_up}, DOWN={token_id_down}")
+            if odds_up is None:
+                odds_up = await poly_client.get_odds(token_id_up)
+            if odds_up is not None:
+                state.poly_up_odds = float(odds_up)
+            if odds_down is None:
+                odds_down = await poly_client.get_odds(token_id_down)
+            if odds_down is not None:
+                state.poly_down_odds = float(odds_down)
+
             # Evaluate signal
             if not state.window.signal_evaluated and not state.window.traded:
                 signal, rejection = evaluate_signal(state, now_ms)
+                state.last_signal_check_ms = now_ms
                 if signal:
+                    state.last_signal_status = "SIGNAL"
+                    state.last_signal_reason = signal.reason
                     logger.info(
                         f"[SIGNAL] {signal.direction.value} — {signal.reason} "
                         f"(PTB={signal.ptb_used:.2f}, trend={signal.trend})"
@@ -277,13 +355,30 @@ async def main() -> None:
                     else:
                         logger.warning(f"[TRADE] Failed")
                 elif rejection:
+                    state.last_signal_status = "REJECTED"
+                    state.last_signal_reason = rejection.reason
                     logger.debug(f"[SIGNAL] Rejected: {rejection.reason}")
 
             # Update Polymarket odds
-            odds_up = await poly_client.get_odds(token_id_up)
+            market, odds_up, odds_down = await fetch_current_btc_odds()
+            if market:
+                state.poly_market_slug = market.slug
+                state.poly_market_question = market.question
+                state.poly_market_condition_id = market.condition_id
+                state.poly_market_neg_risk = market.neg_risk
+                if market.token_id_up != token_id_up or market.token_id_down != token_id_down:
+                    token_id_up, token_id_down = market.token_id_up, market.token_id_down
+                    trader.token_id_up = token_id_up
+                    trader.token_id_down = token_id_down
+                    poly_client.stop_ws_feed()
+                    poly_client.start_ws_feed([token_id_up, token_id_down])
+                    logger.info(f"[WINDOW] Synced market: UP={token_id_up}, DOWN={token_id_down}")
+            if odds_up is None:
+                odds_up = await poly_client.get_odds(token_id_up)
             if odds_up is not None:
                 state.poly_up_odds = float(odds_up)
-            odds_down = await poly_client.get_odds(token_id_down)
+            if odds_down is None:
+                odds_down = await poly_client.get_odds(token_id_down)
             if odds_down is not None:
                 state.poly_down_odds = float(odds_down)
 
@@ -291,9 +386,69 @@ async def main() -> None:
 
     eval_task = asyncio.create_task(evaluation_loop())
 
+    async def redemption_loop() -> None:
+        if not REDEMPTION_ENABLED:
+            logger.info("[REDEEM] Disabled by REDEMPTION_ENABLED=false")
+            return
+
+        try:
+            redeemer = PolymarketRedeemer()
+        except Exception as e:
+            logger.warning("[REDEEM] Not started: %s", e)
+            return
+
+        logger.info("[REDEEM] Background redemption monitor started")
+        while True:
+            await asyncio.sleep(REDEMPTION_POLL_SECS)
+            for trade in list(state.trade_history):
+                if trade.settled or trade.redemption_tx:
+                    continue
+                if not trade.condition_id:
+                    trade.redemption_error = "missing condition_id"
+                    trade.redemption_checked_ms = now_ms()
+                    continue
+
+                try:
+                    result = await asyncio.to_thread(
+                        redeemer.redeem,
+                        condition_id=trade.condition_id,
+                        token_id_up=trade.token_id_up,
+                        token_id_down=trade.token_id_down,
+                        neg_risk=trade.neg_risk,
+                        wait_for_receipt=False,
+                    )
+                    trade.redemption_checked_ms = now_ms()
+                    if result.redeemed:
+                        trade.redemption_tx = result.tx_hash
+                        trade.settled = True
+                        trade.redemption_error = ""
+                        save_trade_history(state.trade_history)
+                        logger.info("[REDEEM] Trade redeemed tx=%s", result.tx_hash)
+                    else:
+                        trade.redemption_error = result.reason
+                        save_trade_history(state.trade_history)
+                        logger.debug("[REDEEM] Trade not redeemable: %s", result.reason)
+                except Exception as e:
+                    trade.redemption_checked_ms = now_ms()
+                    trade.redemption_error = str(e)
+                    save_trade_history(state.trade_history)
+                    logger.warning("[REDEEM] Redemption check failed: %s", e)
+
+            dashboard.broadcast(dashboard._state_snapshot())
+
+    redemption_task = asyncio.create_task(redemption_loop())
+
     # Run until interrupted
     try:
-        await asyncio.gather(binance_task, chainlink_task, eval_task, dashboard_task, fallback_task)
+        await asyncio.gather(
+            binance_task,
+            chainlink_task,
+            eval_task,
+            dashboard_task,
+            fallback_task,
+            redemption_task,
+            wallet_task,
+        )
     except asyncio.CancelledError:
         logger.info("[MAIN] Shutting down...")
         poly_client.stop_ws_feed()

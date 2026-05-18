@@ -4,11 +4,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 import uvicorn
 
+from polymarket_python.config import TRADE_HISTORY_CSV
 from polymarket_python.models import AppState
 
 logger = logging.getLogger(__name__)
@@ -50,11 +52,24 @@ class Dashboard:
             except WebSocketDisconnect:
                 pass
             finally:
-                self._ws_clients.remove(ws)
+                if ws in self._ws_clients:
+                    self._ws_clients.remove(ws)
 
         @self.app.get("/state")
         async def get_state() -> dict[str, Any]:
             return self._state_snapshot()
+
+        @self.app.get("/trades.csv")
+        async def get_trades_csv():
+            path = Path(TRADE_HISTORY_CSV)
+            if not path.is_absolute():
+                path = Path(__file__).resolve().parent.parent / path
+            if not path.exists():
+                return Response(
+                    "timestamp_ms,direction,market_slug,condition_id,token_id,price,size,pnl,settled,redemption_tx\n",
+                    media_type="text/csv",
+                )
+            return FileResponse(path, media_type="text/csv", filename="trade_history.csv")
 
     def _state_snapshot(self) -> dict[str, Any]:
         """Serialize current app state for JSON response / WebSocket."""
@@ -76,6 +91,31 @@ class Dashboard:
                 "size": t.size,
                 "pnl": t.pnl,
                 "settled": t.settled,
+                "market_slug": t.market_slug,
+                "condition_id": t.condition_id,
+                "token_id_up": t.token_id_up,
+                "token_id_down": t.token_id_down,
+                "neg_risk": t.neg_risk,
+                "redemption_tx": t.redemption_tx,
+                "redemption_error": t.redemption_error,
+                "redemption_checked_ms": t.redemption_checked_ms,
+                "order_id": t.order_id,
+                "signal_reason": t.signal_reason,
+                "signal_trend": t.signal_trend,
+                "signal_ptb": t.signal_ptb,
+                "trigger_time_ms": t.trigger_time_ms,
+            })
+
+        klines = []
+        for c in self.state.klines[-80:]:
+            klines.append({
+                "time": c.open_time_ms,
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+                "color": c.color.value,
             })
 
         return {
@@ -84,6 +124,19 @@ class Dashboard:
             "chainlink_price": self.state.chainlink_price,
             "poly_up_odds": self.state.poly_up_odds,
             "poly_down_odds": self.state.poly_down_odds,
+            "poly_market_slug": self.state.poly_market_slug,
+            "poly_market_question": self.state.poly_market_question,
+            "poly_market_condition_id": self.state.poly_market_condition_id,
+            "poly_market_neg_risk": self.state.poly_market_neg_risk,
+            "wallet": {
+                "address": self.state.wallet_address,
+                "pol": self.state.wallet_pol_balance,
+                "usdc": self.state.wallet_usdc_balance,
+                "usdce": self.state.wallet_usdce_balance,
+                "pusd": self.state.wallet_pusd_balance,
+                "error": self.state.wallet_balance_error,
+                "last_update_ms": self.state.last_wallet_balance_time_ms,
+            },
             "window": {
                 "start_ms": window.window_start_ms,
                 "ptb": window.ptb,
@@ -94,6 +147,11 @@ class Dashboard:
                 "traded": window.traded,
                 "signal_evaluated": window.signal_evaluated,
                 "first_in_window_candle_ms": window.first_in_window_candle_ms,
+            },
+            "signal_status": {
+                "last_check_ms": self.state.last_signal_check_ms,
+                "status": self.state.last_signal_status,
+                "reason": self.state.last_signal_reason,
             },
             "indicators": {
                 "atr": indicators.atr,
@@ -111,6 +169,8 @@ class Dashboard:
             "klines_count": len(self.state.klines),
             "last_kline_time_ms": self.state.last_kline_time_ms,
             "last_ticker_time_ms": self.state.last_ticker_time_ms,
+            "last_poly_odds_time_ms": self.state.last_poly_odds_time_ms,
+            "klines": klines,
             "trade_history": trade_history,
         }
 
@@ -127,11 +187,16 @@ class Dashboard:
     body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 20px; min-height: 100vh; }
     h1 { color: #58a6ff; font-size: 22px; margin-bottom: 4px; }
     .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+    .topbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; max-width: 1400px; margin: 0 0 14px 0; }
+    .clock { min-width: 150px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; }
+    .clock .label { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    .clock .time { color: #e6edf3; font-size: 15px; font-family: monospace; font-weight: 600; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; max-width: 1400px; }
     .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
     .card h3 { color: #8b949e; margin: 0 0 12px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
     .card .big-val { font-size: 26px; font-weight: 600; color: #58a6ff; }
     .card .small-val { font-size: 13px; color: #8b949e; margin-top: 4px; }
+    .mono { font-family: monospace; }
     .up { color: #3fb950; }
     .down { color: #f85149; }
     .neutral { color: #d29922; }
@@ -153,11 +218,33 @@ class Dashboard:
     .pnl.negative { color: #f85149; }
     .row { display: flex; justify-content: space-between; align-items: center; }
     .tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #30363d; color: #8b949e; }
+    .chart-wrap { max-width: 1400px; height: 280px; padding: 0; overflow: hidden; }
+    #kline-chart { width: 100%; height: 240px; display: block; }
+    .table-wrap { max-width: 1400px; overflow-x: auto; }
+    th { white-space: nowrap; }
   </style>
 </head>
 <body>
   <h1>Polymarket BTC 5m Breakout</h1>
-  <p class="subtitle">Strategy B — Binance BTC → Polymarket CLOB</p>
+  <p class="subtitle">Strategy B - Binance BTC -> Polymarket CLOB</p>
+  <div class="topbar">
+    <div class="clock">
+      <div class="label">Project Time GMT+7</div>
+      <div class="time" id="clock-gmt7">--</div>
+    </div>
+    <div class="clock">
+      <div class="label">UTC</div>
+      <div class="time" id="clock-utc">--</div>
+    </div>
+    <div class="clock">
+      <div class="label">New York</div>
+      <div class="time" id="clock-ny">--</div>
+    </div>
+    <div class="clock">
+      <div class="label">London</div>
+      <div class="time" id="clock-london">--</div>
+    </div>
+  </div>
   <div id="ws-status"><span class="dot"></span>Connecting...</div>
 
   <div class="grid">
@@ -171,6 +258,17 @@ class Dashboard:
       <h3>Chainlink BTC Feed</h3>
       <div class="big-val" id="chainlink-price">--</div>
       <div class="small-val">Polygon Oracle</div>
+    </div>
+    <div class="card">
+      <h3>Wallet Balances</h3>
+      <table>
+        <tr><td>Gas POL</td><td id="wallet-pol">--</td></tr>
+        <tr><td>USDC</td><td id="wallet-usdc">--</td></tr>
+        <tr><td>USDC.e</td><td id="wallet-usdce">--</td></tr>
+        <tr><td>pUSD</td><td id="wallet-pusd">--</td></tr>
+        <tr><td>Updated</td><td id="wallet-updated">--</td></tr>
+      </table>
+      <div class="small-val mono" id="wallet-address">--</div>
     </div>
 
     <!-- Row 2: Polymarket odds -->
@@ -220,25 +318,36 @@ class Dashboard:
         <tr><td>Trades Placed</td><td id="t-placed">0</td></tr>
         <tr><td>Wins</td><td class="up" id="t-wins">0</td></tr>
         <tr><td>Losses</td><td class="down" id="t-losses">0</td></tr>
+        <tr><td>Last Signal Check</td><td id="signal-check">--</td></tr>
+        <tr><td>Signal Status</td><td id="signal-status">--</td></tr>
       </table>
     </div>
   </div>
 
+  <div class="section-title">BTC 1m Klines</div>
+  <div class="card chart-wrap">
+    <canvas id="kline-chart"></canvas>
+    <div class="small-val" id="kline-caption" style="padding: 0 16px 12px 16px;">Awaiting candles...</div>
+  </div>
+
   <div class="section-title">Trade History</div>
-  <div class="card" style="max-width: 1400px; overflow: hidden;">
+  <div class="card table-wrap">
+    <div class="small-val" style="margin-bottom: 8px;"><a href="/trades.csv" style="color:#58a6ff;">Download CSV</a></div>
     <table id="trade-table" style="font-size: 12px;">
       <thead>
         <tr style="border-bottom: 1px solid #30363d;">
           <th style="text-align:left; padding: 4px 0; color:#8b949e; font-weight: normal;">Time</th>
           <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Dir</th>
+          <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Market</th>
           <th style="text-align:right; padding: 4px 0; color:#8b949e; font-weight: normal;">Entry Odds</th>
           <th style="text-align:right; padding: 4px 0; color:#8b949e; font-weight: normal;">Size</th>
           <th style="text-align:right; padding: 4px 0; color:#8b949e; font-weight: normal;">PnL</th>
-          <th style="text-align:center; padding: 4px 0; color:#8b949e; font-weight: normal;">Settled</th>
+          <th style="text-align:center; padding: 4px 8px; color:#8b949e; font-weight: normal;">Redeem</th>
+          <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Signal</th>
         </tr>
       </thead>
       <tbody id="trade-body">
-        <tr><td colspan="6" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>
+        <tr><td colspan="8" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>
       </tbody>
     </table>
   </div>
@@ -246,7 +355,35 @@ class Dashboard:
   <script>
     function formatTime(ts) {
       if (!ts) return '--';
-      return new Date(ts).toLocaleTimeString();
+      return new Date(ts).toLocaleString('en-GB', {
+        timeZone: 'Asia/Jakarta',
+        hour12: false,
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }) + ' GMT+7';
+    }
+    function formatClock(zone, includeDate = false) {
+      const opts = {
+        timeZone: zone,
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      };
+      if (includeDate) {
+        opts.month = 'short';
+        opts.day = '2-digit';
+      }
+      return new Date().toLocaleString('en-GB', opts);
+    }
+    function tickClocks() {
+      document.getElementById('clock-gmt7').textContent = formatClock('Asia/Jakarta', true);
+      document.getElementById('clock-utc').textContent = formatClock('UTC', true);
+      document.getElementById('clock-ny').textContent = formatClock('America/New_York');
+      document.getElementById('clock-london').textContent = formatClock('Europe/London');
     }
     function formatPrice(v) {
       if (!v) return '--';
@@ -256,9 +393,87 @@ class Dashboard:
       if (!v) return '--';
       return v.toFixed(4);
     }
+    function formatToken(v, digits = 4) {
+      if (v === null || v === undefined) return '--';
+      return Number(v).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: digits});
+    }
+    function shortAddress(v) {
+      if (!v) return '--';
+      return v.slice(0, 6) + '...' + v.slice(-4);
+    }
+    function drawKlines(klines) {
+      const canvas = document.getElementById('kline-chart');
+      const caption = document.getElementById('kline-caption');
+      const ctx = canvas.getContext('2d');
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const width = rect.width;
+      const height = rect.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(0, 0, width, height);
+
+      const data = (klines || []).slice(-60);
+      if (!data.length) {
+        caption.textContent = 'Awaiting candles...';
+        return;
+      }
+
+      const pad = { left: 54, right: 16, top: 14, bottom: 24 };
+      const prices = data.flatMap(k => [k.high, k.low]).filter(v => Number.isFinite(v));
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const span = Math.max(max - min, 1);
+      const plotW = width - pad.left - pad.right;
+      const plotH = height - pad.top - pad.bottom;
+      const xStep = plotW / Math.max(data.length, 1);
+      const candleW = Math.max(3, Math.min(10, xStep * 0.55));
+      const y = (price) => pad.top + ((max - price) / span) * plotH;
+
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i <= 4; i++) {
+        const yy = pad.top + (plotH / 4) * i;
+        ctx.moveTo(pad.left, yy);
+        ctx.lineTo(width - pad.right, yy);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'right';
+      for (let i = 0; i <= 4; i++) {
+        const price = max - (span / 4) * i;
+        ctx.fillText(price.toFixed(1), pad.left - 8, pad.top + (plotH / 4) * i + 4);
+      }
+
+      data.forEach((k, i) => {
+        const x = pad.left + i * xStep + xStep / 2;
+        const up = k.close >= k.open;
+        const color = up ? '#3fb950' : '#f85149';
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x, y(k.high));
+        ctx.lineTo(x, y(k.low));
+        ctx.stroke();
+        const top = y(Math.max(k.open, k.close));
+        const bottom = y(Math.min(k.open, k.close));
+        ctx.fillRect(x - candleW / 2, top, candleW, Math.max(bottom - top, 1));
+      });
+
+      const last = data[data.length - 1];
+      caption.textContent = `${data.length} candles · last ${formatTime(last.time)} · O ${last.open.toFixed(1)} H ${last.high.toFixed(1)} L ${last.low.toFixed(1)} C ${last.close.toFixed(1)}`;
+    }
 
     const ws = new WebSocket(`ws://${location.host}/ws`);
     const statusEl = document.getElementById('ws-status');
+    tickClocks();
+    setInterval(tickClocks, 1000);
 
     ws.onopen = () => { statusEl.className = 'connected'; statusEl.innerHTML = '<span class="dot"></span>Connected — live data'; };
     ws.onclose = () => { statusEl.className = 'disconnected'; statusEl.innerHTML = '<span class="dot"></span>Disconnected — reconnecting...'; setTimeout(() => location.reload(), 3000); };
@@ -274,9 +489,20 @@ class Dashboard:
       document.getElementById('last-price-time').textContent = priceTs ? `${priceSource} · ${formatTime(priceTs)}` : priceSource;
       document.getElementById('chainlink-price').textContent = d.chainlink_price ? d.chainlink_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
 
+      // Wallet balances
+      const wallet = d.wallet || {};
+      document.getElementById('wallet-pol').textContent = wallet.error ? '--' : formatToken(wallet.pol, 6);
+      document.getElementById('wallet-usdc').textContent = wallet.error ? '--' : formatToken(wallet.usdc, 2);
+      document.getElementById('wallet-usdce').textContent = wallet.error ? '--' : formatToken(wallet.usdce, 2);
+      document.getElementById('wallet-pusd').textContent = wallet.error ? '--' : formatToken(wallet.pusd, 2);
+      document.getElementById('wallet-updated').textContent = wallet.error ? wallet.error : formatTime(wallet.last_update_ms);
+      document.getElementById('wallet-address').textContent = shortAddress(wallet.address);
+
       // Odds
       document.getElementById('poly-up').textContent = d.poly_up_odds ? formatOdds(d.poly_up_odds) : '--';
       document.getElementById('poly-down').textContent = d.poly_down_odds ? formatOdds(d.poly_down_odds) : '--';
+      document.getElementById('poly-up-label').textContent = d.last_poly_odds_time_ms ? `CLOB midpoint · ${formatTime(d.last_poly_odds_time_ms)}` : (d.poly_market_slug || 'Awaiting market...');
+      document.getElementById('poly-down-label').textContent = d.poly_market_slug || 'Awaiting market...';
 
       // Window
       const w = d.window || {};
@@ -325,27 +551,34 @@ class Dashboard:
       document.getElementById('t-placed').textContent = m.trades_placed || 0;
       document.getElementById('t-wins').textContent = m.win_count || 0;
       document.getElementById('t-losses').textContent = m.loss_count || 0;
+      const signalStatus = d.signal_status || {};
+      document.getElementById('signal-check').textContent = signalStatus.last_check_ms ? formatTime(signalStatus.last_check_ms) : '--';
+      document.getElementById('signal-status').textContent = signalStatus.reason || signalStatus.status || '--';
+
+      drawKlines(d.klines || []);
 
       // Trade history
       const tbody = document.getElementById('trade-body');
       const history = d.trade_history || [];
       if (history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>';
       } else {
         tbody.innerHTML = history.slice(0, 20).map(t => {
-          const time = t.time ? new Date(t.time).toLocaleTimeString() : '--';
+          const time = t.time ? formatTime(t.time) : '--';
           const cls = t.direction === 'UP' ? 'up' : 'down';
           const pnlStr = t.pnl !== 0 ? ((t.pnl >= 0 ? '+$' : '-$') + Math.abs(t.pnl).toFixed(2)) : '--';
-          const settledBadge = t.settled
-            ? '<span style="background:#1f4d2a;color:#3fb950;padding:1px 6px;border-radius:3px;font-size:10px;">WIN</span>'
-            : '<span style="background:#2d200a;color:#d29922;padding:1px 6px;border-radius:3px;font-size:10px;">OPEN</span>';
+          const redeemText = t.redemption_tx ? shortAddress(t.redemption_tx) : (t.redemption_error || (t.settled ? 'Settled' : 'Open'));
+          const market = t.market_slug ? t.market_slug.replace('btc-updown-5m-', '') : '--';
+          const signal = t.signal_reason || t.signal_trend || '--';
           return `<tr style="border-bottom: 1px solid #21262d;">
             <td style="color:#8b949e; padding: 5px 0;">${time}</td>
             <td style="padding: 5px 8px;"><span class="${cls}" style="font-weight:600;font-size:12px;">${t.direction}</span></td>
+            <td style="padding: 5px 8px; font-family: monospace;">${market}</td>
             <td style="text-align:right; font-family: monospace; padding: 5px 0;">${t.price ? t.price.toFixed(4) : '--'}</td>
             <td style="text-align:right; font-family: monospace; padding: 5px 0;">$${t.size ? t.size.toFixed(2) : '--'}</td>
             <td style="text-align:right; font-family: monospace; padding: 5px 0;" class="${t.pnl > 0 ? 'up' : t.pnl < 0 ? 'down' : ''}">${pnlStr}</td>
-            <td style="text-align:center; padding: 5px 0;">${settledBadge}</td>
+            <td style="text-align:center; padding: 5px 8px; font-family: monospace;">${redeemText}</td>
+            <td style="padding: 5px 8px;">${signal}</td>
           </tr>`;
         }).join('');
       }
@@ -361,8 +594,12 @@ class Dashboard:
 
     def broadcast(self, data: dict[str, Any]) -> None:
         """Broadcast a message to all connected WebSocket clients."""
-        for ws in self._ws_clients:
-            try:
-                asyncio.create_task(ws.send_json(data))
-            except Exception:
-                pass
+        for ws in list(self._ws_clients):
+            asyncio.create_task(self._send_json(ws, data))
+
+    async def _send_json(self, ws: WebSocket, data: dict[str, Any]) -> None:
+        try:
+            await ws.send_json(data)
+        except Exception:
+            if ws in self._ws_clients:
+                self._ws_clients.remove(ws)

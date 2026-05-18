@@ -3,10 +3,10 @@ Strategy B — 5m BTC Breakout signal evaluation.
 
 Signal fires when ALL conditions are true:
 1. Trend: Bullish or Bearish from first 3 candles INSIDE window
-2. Trigger: 4th candle inside window, color matches trend
+2. Trigger: 3rd closed candle inside window confirms trend before final cutoff
 3. PTB Side Check: UP → trigger.close > PTB, DOWN → trigger.close < PTB
 4. Wick Check: adverse wick < body × 0.5 OR both wicks < ATR × 0.1
-5. Chainlink Guard: trigger forms after 60s into window (candle 4+)
+5. Chainlink Guard: trigger forms after 60s into window
 6. Odds Ready: both poly_up_odds and poly_down_odds present
 7. Window State: not already signaled or traded
 """
@@ -45,10 +45,10 @@ def get_inside_window_candles(state: AppState) -> list[Candle]:
 
 
 def find_trigger_candle(state: AppState) -> Optional[Candle]:
-    """Find the trigger candle (4th candle inside window, at index 3)."""
+    """Find the trigger candle (3rd closed candle inside window, at index 2)."""
     inside = get_inside_window_candles(state)
-    if len(inside) >= 4:
-        return inside[3]  # 4th candle (0-indexed)
+    if len(inside) >= 3:
+        return inside[2]  # 3rd candle (0-indexed)
     return None
 
 
