@@ -2,7 +2,7 @@
 
 ## Overview
 
-A 5-minute window breakout trading strategy on Polymarket BTC prediction markets (UP/DOWN). Watches Binance BTC price via WebSocket + Chainlink oracle, detects price breakouts from the window open price (PTB), and places UP/DOWN trades on Polymarket CLOB.
+A 5-minute window breakout trading strategy on Polymarket BTC prediction markets (UP/DOWN). Primary price feed is **Bybit V5 WebSocket** (BTCUSDT kline + ticker), with Chainlink BTC/USD oracle as secondary reference. Detects price breakouts from the window open price (PTB) and places UP/DOWN trades on Polymarket CLOB.
 
 ---
 
@@ -13,7 +13,7 @@ A 5-minute window breakout trading strategy on Polymarket BTC prediction markets
 - One trade per window maximum
 
 ### PTB (Previous Trade Baseline)
-- Captured at window open from Binance ticker OR Chainlink (first one wins)
+- Captured at window open from Bybit ticker OR Chainlink (first one wins)
 - Acts as the breakout reference price
 
 ### Trend Detection
@@ -97,18 +97,22 @@ Signal fires when ALL of these conditions are true:
 polymarket_python/
 ├── config.py              # All constants and env var defaults
 ├── models.py              # Candle, WindowState, Signal, AppState
-├── binance_client.py      # Binance WebSocket (kline + ticker), REST seed
-├── chainlink_client.py    # Chainlink BTC price feed
-├── polymarket_client.py    # Polymarket CLOB API (auth, order placement)
-├── polymarket_ws.py       # Polymarket orderbook WebSocket
+├── bybit_client.py         # Bybit V5 WebSocket (kline + ticker), REST seed (primary feed)
+├── binance_client.py       # Binance WebSocket (kline + ticker) — fallback
+├── chainlink_client.py    # Chainlink BTC price feed (Data Engine REST API)
+├── polymarket_client.py    # Polymarket CLOB API (auth, order placement) + WebSocket book feed
+├── polymarket_public_client.py  # Public Gamma API market discovery + odds
 ├── indicators.py          # ATR, volume SMA computation
 ├── strategy.py            # Strategy B signal evaluation
 ├── guardrails.py          # Time-based trade restrictions
 ├── scheduler.py           # 5m window timing calculations
-├── trader.py              # Trade execution (live only)
-├── state.py               # Window reset, PTB capture, state management
+├── trader.py              # Trade execution
+├── trade_store.py         # CSV trade history persistence (with redemption fields)
+├── redemption.py          # On-chain CTF position redemption (PolymarketRedeemer)
+├── wallet_balances.py      # POL + USDC.e + pUSD balance reader
 ├── dashboard.py           # FastAPI HTTP server + WebSocket streaming
-└── main.py                # Main event loop
+├── main.py                # Main event loop + background redemption loop
+└── price_fallback.py      # CoinGecko fallback BTC price
 ```
 
 ---
@@ -116,7 +120,5 @@ polymarket_python/
 ## Key Differences from Rust Version
 
 1. No paper mode — live trading only
-2. Uses py_order_utils for EIP-712 order signing
-3. Signature type POLY_PROXY (1) for Magic Link authentication
-4. L2 HMAC: timestamp + method + path + body (full JSON for POST)
-5. No raw RPC balance — uses CLOB /balance-allowance endpoint
+2. Uses py-clob-client-v2 for EIP-712 order signing
+3. Signature type **EOA (0)** for direct wallet signing (not Magic Link)

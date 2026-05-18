@@ -20,7 +20,7 @@ def candle(start_ms: int, open_: float, close: float) -> Candle:
 
 
 class StrategyTests(unittest.TestCase):
-    def test_trigger_is_third_closed_candle_before_final_cutoff(self) -> None:
+    def test_trigger_is_fourth_closed_candle_before_final_cutoff(self) -> None:
         start = 1_779_085_200_000
         state = AppState()
         state.window.window_start_ms = start
@@ -31,16 +31,16 @@ class StrategyTests(unittest.TestCase):
         state.indicators.valid = True
         state.indicators.atr = 20
         state.indicators.vol_sma = 10
-        state.klines = [
-            candle(start, 100, 102),
-            candle(start + 60_000, 102, 104),
-            candle(start + 120_000, 104, 108),
-        ]
+        # 4 candles: c1,c2,c3 are trend candles; c4 is the trigger (4th candle)
+        c1 = candle(start, 100, 102)
+        c2 = candle(start + 60_000, 102, 104)
+        c3 = candle(start + 120_000, 104, 108)
+        trigger = candle(start + 180_000, 108, 110)  # 4th candle = trigger
+        state.klines = [c1, c2, c3, trigger]
 
-        trigger = find_trigger_candle(state)
+        found = find_trigger_candle(state)
+        self.assertEqual(found.open_time_ms, start + 180_000)
         signal, rejection = evaluate_signal(state, start + 180_000)
-
-        self.assertEqual(trigger.open_time_ms, start + 120_000)
         self.assertIsNone(rejection)
         self.assertIsNotNone(signal)
         self.assertEqual(signal.direction, SignalDirection.UP)

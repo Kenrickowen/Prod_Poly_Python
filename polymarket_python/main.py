@@ -30,7 +30,7 @@ from polymarket_python.config import (
     WINDOW_MINUTES,
 )
 from polymarket_python.models import AppState, Candle
-from polymarket_python.binance_client import BinanceClient
+from polymarket_python.bybit_client import BybitClient
 from polymarket_python.chainlink_client import fetch_btc_price
 from polymarket_python.polymarket_client import PolymarketClient
 from polymarket_python.strategy import evaluate_signal
@@ -218,10 +218,10 @@ async def main() -> None:
         now_ms = int(time.time() * 1000)
         capture_ptb_from_binance(state, price, now_ms)
 
-    # Start Binance WebSocket
-    binance = BinanceClient(state=state, on_candle=on_candle, on_price=on_price)
-    binance_task = asyncio.create_task(binance.start())
-    logger.info("[FEEDS] Binance WebSocket started")
+    # Start Bybit WebSocket (primary price feed — replaces geo-blocked Binance)
+    bybit = BybitClient(state=state, on_candle=on_candle, on_price=on_price)
+    bybit_task = asyncio.create_task(bybit.start())
+    logger.info("[FEEDS] Bybit WebSocket started")
 
     # Fallback price polling (when Binance is blocked)
     async def poll_fallback_prices() -> None:
@@ -441,7 +441,7 @@ async def main() -> None:
     # Run until interrupted
     try:
         await asyncio.gather(
-            binance_task,
+            bybit_task,
             chainlink_task,
             eval_task,
             dashboard_task,
@@ -452,7 +452,7 @@ async def main() -> None:
     except asyncio.CancelledError:
         logger.info("[MAIN] Shutting down...")
         poly_client.stop_ws_feed()
-        await binance.stop()
+        await bybit.stop()
 
 
 if __name__ == "__main__":

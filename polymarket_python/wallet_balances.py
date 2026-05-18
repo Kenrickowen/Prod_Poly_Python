@@ -2,12 +2,40 @@
 from __future__ import annotations
 
 import os
+import ssl
 import time
 from dataclasses import dataclass
 
+import certifi
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 from web3 import Web3
 
 from polymarket_python.config import INFURA_URL, POLYMARKET_PUSD, POLYMARKET_USDC, POLYMARKET_USDCE
+
+
+class _SSLAdapter(HTTPAdapter):
+    def __init__(self, ssl_ctx, **kwargs):
+        self.ssl_ctx = ssl_ctx
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False):
+        self.poolmanager = PoolManager(
+            ssl_context=self.ssl_ctx,
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+        )
+
+
+def _make_ssl_session() -> requests.Session:
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(certifi.where())
+    session = requests.Session()
+    session.mount("https://", _SSLAdapter(ctx))
+    return session
+
 
 ERC20_BALANCE_ABI = [
     {
@@ -49,7 +77,8 @@ class WalletBalanceClient:
         if not self.wallet_address:
             raise ValueError("FUNDER_ADDRESS is required to read wallet balances")
 
-        self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+        session = _make_ssl_session()
+        self.w3 = Web3(Web3.HTTPProvider(self.rpc_url, session=session))
         if not self.w3.is_connected():
             raise ConnectionError("Could not connect to Polygon RPC")
 

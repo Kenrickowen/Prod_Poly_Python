@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import ssl
 from typing import Awaitable, Callable
 
+import certifi
 import httpx
 import websockets
 
@@ -110,7 +112,9 @@ class BybitClient:
 
         while self._running:
             try:
-                async with websockets.connect(self.ws_url, ping_interval=20) as ws:
+                ctx = ssl.create_default_context()
+                ctx.load_verify_locations(certifi.where())
+                async with websockets.connect(self.ws_url, ssl=ctx, ping_interval=20) as ws:
                     logger.info("[BYBIT] WS connected: %s", self.ws_url)
                     await ws.send(json.dumps(subscribe_msg))
                     logger.info("[BYBIT] Subscribed to %s, %s", ticker_topic, kline_topic)

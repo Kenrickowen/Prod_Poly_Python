@@ -45,10 +45,10 @@ def get_inside_window_candles(state: AppState) -> list[Candle]:
 
 
 def find_trigger_candle(state: AppState) -> Optional[Candle]:
-    """Find the trigger candle (3rd closed candle inside window, at index 2)."""
+    """Find the trigger candle (4th closed candle inside window, at index 3)."""
     inside = get_inside_window_candles(state)
-    if len(inside) >= 3:
-        return inside[2]  # 3rd candle (0-indexed)
+    if len(inside) >= 4:
+        return inside[3]  # 4th candle (0-indexed), i.e. inside[3]
     return None
 
 

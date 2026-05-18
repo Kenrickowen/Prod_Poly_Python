@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import logging
+import ssl
 import time
 from dataclasses import dataclass
 
+import certifi
+import requests
 from eth_account import Account
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 
@@ -24,6 +29,29 @@ logger = logging.getLogger(__name__)
 
 ZERO_BYTES32 = b"\x00" * 32
 BINARY_INDEX_SETS = [1, 2]
+
+
+class _SSLAdapter(HTTPAdapter):
+    def __init__(self, ssl_ctx, **kwargs):
+        self.ssl_ctx = ssl_ctx
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False):
+        self.poolmanager = PoolManager(
+            ssl_context=self.ssl_ctx,
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+        )
+
+
+def _make_ssl_session() -> requests.Session:
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(certifi.where())
+    session = requests.Session()
+    session.mount("https://", _SSLAdapter(ctx))
+    return session
+
 
 CTF_ABI = [
     {
@@ -129,7 +157,8 @@ class PolymarketRedeemer:
         if self.signer_address.lower() != self.funder_address.lower():
             raise ValueError("Direct redemption requires PRIVATE_KEY to control FUNDER_ADDRESS")
 
-        self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+        session = _make_ssl_session()
+        self.w3 = Web3(Web3.HTTPProvider(self.rpc_url, session=session))
         if not self.w3.is_connected():
             raise ConnectionError("Could not connect to Polygon RPC")
 
