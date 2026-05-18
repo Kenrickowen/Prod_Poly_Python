@@ -114,6 +114,7 @@ class AppState:
     window: WindowState = field(default_factory=WindowState)
 
     last_price: float = 0.0
+    price_source: str = ""
     chainlink_price: Optional[float] = None
     poly_up_odds: Optional[float] = None
     poly_down_odds: Optional[float] = None

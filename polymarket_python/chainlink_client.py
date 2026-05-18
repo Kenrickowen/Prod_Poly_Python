@@ -1,4 +1,6 @@
 """Chainlink BTC/USD price feed via Data Engine REST API."""
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
 

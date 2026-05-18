@@ -1,4 +1,6 @@
 """Polymarket CLOB client using py-clob-client-v2 SDK with EOA signature type 0."""
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

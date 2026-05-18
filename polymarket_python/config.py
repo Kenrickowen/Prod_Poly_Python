@@ -9,6 +9,10 @@ GAMMA_HOST = "https://gamma-api.polymarket.com"
 BINANCE_WS_URL = "wss://stream.binance.com:9443/stream?streams=btcusdt@kline_1m/btcusdt@ticker"
 BINANCE_REST_URL = "https://api.binance.com/api/v3"
 
+# ─── Bybit WebSocket ─────────────────────────────────────────────────────────
+BYBIT_WS_URL = os.getenv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/linear")
+BYBIT_SYMBOL = os.getenv("BYBIT_SYMBOL", "BTCUSDT")
+
 # ─── Chainlink BTC/USD on Polygon ────────────────────────────────────────────
 CHAINLINK_BTC_FEED = "0x1B44F3514812d835EB1BDB0acB33d3fA3351Ee43"
 CHAINLINK_ABI = [

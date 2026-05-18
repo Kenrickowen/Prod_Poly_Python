@@ -1,4 +1,6 @@
 """Fallback BTC price sources when Binance is geo-blocked."""
+from __future__ import annotations
+
 import logging
 
 from polymarket_python.config import GAMMA_HOST

@@ -80,6 +80,7 @@ class Dashboard:
 
         return {
             "last_price": self.state.last_price,
+            "price_source": self.state.price_source,
             "chainlink_price": self.state.chainlink_price,
             "poly_up_odds": self.state.poly_up_odds,
             "poly_down_odds": self.state.poly_down_odds,
@@ -109,6 +110,7 @@ class Dashboard:
             },
             "klines_count": len(self.state.klines),
             "last_kline_time_ms": self.state.last_kline_time_ms,
+            "last_ticker_time_ms": self.state.last_ticker_time_ms,
             "trade_history": trade_history,
         }
 
@@ -161,7 +163,7 @@ class Dashboard:
   <div class="grid">
     <!-- Row 1: Price feeds -->
     <div class="card">
-      <h3>BTC Price (Binance)</h3>
+      <h3>BTC Price</h3>
       <div class="big-val" id="last-price">--</div>
       <div class="small-val" id="last-price-time">--</div>
     </div>
@@ -267,7 +269,9 @@ class Dashboard:
 
       // Price feeds
       document.getElementById('last-price').textContent = d.last_price ? d.last_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
-      document.getElementById('last-price-time').textContent = d.last_kline_time_ms ? formatTime(d.last_kline_time_ms) : '--';
+      const priceTs = d.last_ticker_time_ms || d.last_kline_time_ms;
+      const priceSource = d.price_source || 'Market feed';
+      document.getElementById('last-price-time').textContent = priceTs ? `${priceSource} · ${formatTime(priceTs)}` : priceSource;
       document.getElementById('chainlink-price').textContent = d.chainlink_price ? d.chainlink_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
 
       // Odds
