@@ -13,6 +13,7 @@ BINANCE_REST_URL = "https://api.binance.com/api/v3"
 BYBIT_WS_URL = os.getenv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/linear")
 BYBIT_REST_URL = os.getenv("BYBIT_REST_URL", "https://api.bybit.com")
 BYBIT_SYMBOL = os.getenv("BYBIT_SYMBOL", "BTCUSDT")
+BYBIT_SSL_VERIFY = os.getenv("BYBIT_SSL_VERIFY", "true").lower() in {"1", "true", "yes", "on"}
 
 # ─── Polymarket public odds polling ──────────────────────────────────────────
 POLY_ODDS_POLL_SECS = float(os.getenv("POLY_ODDS_POLL_SECS", "5"))
@@ -66,6 +67,8 @@ VOLUME_FACTOR = 1.0
 # ─── Position sizing ──────────────────────────────────────────────────────────
 CAPITAL = 10_000.0
 POSITION_FRACTION = 0.01  # 1% per trade
+FIXED_TRADE_USD = float(os.getenv("FIXED_TRADE_USD", "1"))
+MIN_POLYMARKET_SHARES = float(os.getenv("MIN_POLYMARKET_SHARES", "5"))
 
 # ─── Binance REST seed ────────────────────────────────────────────────────────
 BINANCE_SEED_CANDLES = 15

@@ -6,8 +6,14 @@ import json
 import logging
 import os
 
-from py_clob_client import ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions
-from py_order_utils.model import BUY, SELL
+from py_clob_client_v2 import (
+    ClobClient,
+    MarketOrderArgs,
+    OrderArgs,
+    OrderType,
+    PartialCreateOrderOptions,
+    Side,
+)
 
 from polymarket_python.config import POLYMARKET_HOST, CHAIN_ID
 
@@ -42,7 +48,7 @@ class PolymarketClient:
             key=self._key,
             chain_id=CHAIN_ID,
         )
-        self._creds = temp_client.create_or_derive_api_creds()
+        self._creds = temp_client.create_or_derive_api_key()
         logger.info("[POLY] API credentials derived")
 
         # L2 auth — fully authenticated client with signature type 0 (EOA)
@@ -144,7 +150,7 @@ class PolymarketClient:
     async def get_market(self, condition_id: str) -> dict | None:
         """Get CLOB market info by condition_id."""
         try:
-            return self._client.get_clob_market_info(condition_id)
+            return self._client.get_market(condition_id)
         except Exception as e:
             logger.warning(f"[POLY] get_market failed: {e}")
             return None
@@ -197,16 +203,14 @@ class PolymarketClient:
         Uses tick_size and neg_risk from market info.
         """
         try:
-            # Get market info for tick_size and neg_risk
-            market_info = self._client.get_clob_market_info(condition_id=token_id)
-            tick_size = market_info.get("mts", "0.01") if market_info else "0.01"
-            neg_risk = market_info.get("nr", False) if market_info else False
+            tick_size = self._client.get_tick_size(token_id)
+            neg_risk = self._client.get_neg_risk(token_id)
 
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
                 size=size,
-                side=BUY if side.upper() == "BUY" else SELL,
+                side=Side.BUY if side.upper() == "BUY" else Side.SELL,
             )
             options = PartialCreateOrderOptions(
                 tick_size=tick_size,
@@ -222,6 +226,35 @@ class PolymarketClient:
             return response
         except Exception as e:
             logger.error(f"[POLY] place_order failed: {e}")
+            return None
+
+    async def place_market_order(
+        self,
+        token_id: str,
+        side: str,
+        amount_usd: float,
+        order_type=OrderType.FAK,
+    ) -> dict | None:
+        """Place a market order where amount_usd is the USDC spend amount."""
+        try:
+            tick_size = self._client.get_tick_size(token_id)
+            neg_risk = self._client.get_neg_risk(token_id)
+            order_args = MarketOrderArgs(
+                token_id=token_id,
+                amount=amount_usd,
+                side=Side.BUY if side.upper() == "BUY" else Side.SELL,
+                order_type=order_type,
+            )
+            options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
+            response = self._client.create_and_post_market_order(
+                order_args=order_args,
+                options=options,
+                order_type=order_type,
+            )
+            logger.info("[POLY] Market order placed: %s", response)
+            return response
+        except Exception as e:
+            logger.error("[POLY] place_market_order failed: %s", e)
             return None
 
     async def cancel_all(self) -> dict | None:

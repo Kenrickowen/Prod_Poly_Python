@@ -93,9 +93,15 @@ class BinanceClient:
             logger.warning(f"[BINANCE] Seed fetch failed: {e}")
 
     async def _run(self) -> None:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._kline_loop())
-            tg.create_task(self._ticker_loop())
+        tasks = [
+            asyncio.create_task(self._kline_loop()),
+            asyncio.create_task(self._ticker_loop()),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
 
     async def _kline_loop(self) -> None:
         while self._running:

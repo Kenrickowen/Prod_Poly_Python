@@ -69,7 +69,7 @@ class WalletBalanceClient:
     """Read native POL, USDC.e, and Polymarket pUSD balances via Polygon RPC."""
 
     def __init__(self, *, rpc_url: str | None = None, wallet_address: str | None = None):
-        self.rpc_url = rpc_url or INFURA_URL
+        self.rpc_url = rpc_url or os.getenv("INFURA_URL", "") or INFURA_URL
         self.wallet_address = wallet_address or os.getenv("FUNDER_ADDRESS", "")
 
         if not self.rpc_url:

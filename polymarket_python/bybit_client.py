@@ -11,7 +11,7 @@ import certifi
 import httpx
 import websockets
 
-from polymarket_python.config import BYBIT_REST_URL, BYBIT_SYMBOL, BYBIT_WS_URL
+from polymarket_python.config import BYBIT_REST_URL, BYBIT_SSL_VERIFY, BYBIT_SYMBOL, BYBIT_WS_URL
 from polymarket_python.models import AppState, Candle, CandleColor
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,8 @@ class BybitClient:
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
+        if not BYBIT_SSL_VERIFY:
+            logger.warning("[BYBIT] TLS certificate verification is disabled for this process")
         await self._fetch_seed_klines()
         self._running = True
         self._task = asyncio.create_task(self._run())
@@ -112,8 +114,10 @@ class BybitClient:
 
         while self._running:
             try:
-                ctx = ssl.create_default_context()
-                ctx.load_verify_locations(certifi.where())
+                if BYBIT_SSL_VERIFY:
+                    ctx = ssl.create_default_context(cafile=certifi.where())
+                else:
+                    ctx = ssl._create_unverified_context()
                 async with websockets.connect(self.ws_url, ssl=ctx, ping_interval=20) as ws:
                     logger.info("[BYBIT] WS connected: %s", self.ws_url)
                     await ws.send(json.dumps(subscribe_msg))
@@ -152,7 +156,7 @@ class BybitClient:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("[BYBIT] WS error: %s, reconnecting in 5s...", e)
+                logger.warning("[BYBIT] WS error: %r, reconnecting in 5s...", e)
                 await asyncio.sleep(5)
 
     async def _fetch_seed_klines(self, limit: int = 60) -> None:
@@ -160,7 +164,8 @@ class BybitClient:
             return
 
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            verify = certifi.where() if BYBIT_SSL_VERIFY else False
+            async with httpx.AsyncClient(timeout=15, verify=verify) as client:
                 resp = await client.get(
                     f"{BYBIT_REST_URL}/v5/market/kline",
                     params={

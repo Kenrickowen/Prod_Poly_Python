@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import ssl
 import time
 from dataclasses import dataclass
@@ -141,9 +142,7 @@ class PolymarketRedeemer:
         private_key: str | None = None,
         funder_address: str | None = None,
     ):
-        import os
-
-        self.rpc_url = rpc_url or INFURA_URL
+        self.rpc_url = rpc_url or os.getenv("INFURA_URL", "") or INFURA_URL
         self.private_key = private_key or os.getenv("PRIVATE_KEY", "")
         self.funder_address = Web3.to_checksum_address(funder_address or os.getenv("FUNDER_ADDRESS", ""))
 

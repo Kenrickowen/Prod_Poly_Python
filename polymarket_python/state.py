@@ -27,6 +27,8 @@ def record_first_in_window(state: AppState, candle: Candle) -> None:
 
 
 def get_signal_ptb(state: AppState) -> float:
-    if state.window.ptb_binance > 0:
-        return state.window.ptb_binance
-    return state.window.ptb if state.window.ptb > 0 else 0.0
+    # Strategy signals must compare against the fixed price captured at the
+    # start of the 5-minute window, not the latest streaming ticker update.
+    if state.window.ptb > 0:
+        return state.window.ptb
+    return state.window.ptb_binance if state.window.ptb_binance > 0 else 0.0

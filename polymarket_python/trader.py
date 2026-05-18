@@ -4,7 +4,7 @@ import time
 
 from polymarket_python.models import AppState, Signal, SignalDirection, Trade
 from polymarket_python.polymarket_client import PolymarketClient
-from polymarket_python.config import CAPITAL, POSITION_FRACTION
+from polymarket_python.config import CAPITAL, FIXED_TRADE_USD, POSITION_FRACTION
 from polymarket_python.trade_store import append_trade
 
 logger = logging.getLogger(__name__)
@@ -31,15 +31,15 @@ class Trader:
             logger.warning(f"[TRADER] Could not get odds for {token_id}")
             odds = 0.5  # fallback
 
-        # Position size: 1% of capital
-        size = (CAPITAL * POSITION_FRACTION) / odds
+        spend_usd = FIXED_TRADE_USD if FIXED_TRADE_USD > 0 else CAPITAL * POSITION_FRACTION
+        size = spend_usd / odds
         logger.info(
-            f"[TRADER] {direction.value}: size={size:.2f} tokens at price={odds:.4f}, "
+            f"[TRADER] {direction.value}: spend=${spend_usd:.2f}, size={size:.2f} tokens at price={odds:.4f}, "
             f"token_id={token_id}, reason={signal.reason}"
         )
 
         side = "BUY" if direction == SignalDirection.UP else "BUY"
-        result = await self.client.place_order(token_id, side, size, odds)
+        result = await self.client.place_market_order(token_id, side, spend_usd)
 
         if result:
             order_id = ""
@@ -51,7 +51,7 @@ class Trader:
                 direction=direction,
                 token_id=token_id,
                 price=odds,
-                size=size,
+                size=spend_usd,
                 condition_id=state.poly_market_condition_id,
                 market_slug=state.poly_market_slug,
                 order_id=order_id,

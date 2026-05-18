@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from polymarket_python.models import AppState, Candle, CandleColor, SignalDirection
+from polymarket_python.state import capture_ptb_from_binance, get_signal_ptb
 from polymarket_python.strategy import evaluate_signal, find_trigger_candle
 
 
@@ -44,6 +45,16 @@ class StrategyTests(unittest.TestCase):
         self.assertIsNone(rejection)
         self.assertIsNotNone(signal)
         self.assertEqual(signal.direction, SignalDirection.UP)
+
+    def test_signal_ptb_stays_fixed_after_ticker_updates(self) -> None:
+        state = AppState()
+        start = 1_779_085_200_000
+        capture_ptb_from_binance(state, 100.0, start)
+        capture_ptb_from_binance(state, 105.0, start + 30_000)
+
+        self.assertEqual(state.window.ptb, 100.0)
+        self.assertEqual(state.window.ptb_binance, 105.0)
+        self.assertEqual(get_signal_ptb(state), 100.0)
 
 
 if __name__ == "__main__":
