@@ -1,5 +1,5 @@
 """
-Strategy B — 5m BTC Breakout signal evaluation.
+Strategy B — 5m BTC Breakout signal evaluation (Current).
 
 Signal fires when ALL conditions are true:
 1. Trend: Bullish or Bearish from first 3 candles INSIDE window
@@ -60,8 +60,8 @@ def check_candle_color_matches_trend(candle: Candle, trend: str) -> bool:
     return False
 
 
-def evaluate_signal(state: AppState, now_ms: int) -> tuple[Optional[Signal], Optional[SignalRejection]]:
-    """Evaluate Strategy B signal. Returns (signal, rejection)."""
+def evaluate_signal_current(state: AppState, now_ms: int) -> tuple[Optional[Signal], Optional[SignalRejection]]:
+    """Evaluate Strategy B signal (current). Returns (signal, rejection)."""
     window = state.window
 
     if window.window_start_ms == 0:
@@ -141,3 +141,11 @@ def evaluate_signal(state: AppState, now_ms: int) -> tuple[Optional[Signal], Opt
         return signal, None
 
     return None, SignalRejection("PtbSideFailed")
+
+
+def evaluate_signal(state: AppState, now_ms: int) -> tuple[Optional[Signal], Optional[SignalRejection]]:
+    """Dispatcher — routes to current or legacy strategy based on state.strategy_mode."""
+    if state.strategy_mode == "legacy":
+        from polymarket_python.strategy_legacy import evaluate_signal_legacy
+        return evaluate_signal_legacy(state, now_ms)
+    return evaluate_signal_current(state, now_ms)

@@ -199,3 +199,57 @@ A live Polymarket trading bot implementing Strategy B (5m BTC Breakout):
 - **Background auto-redeem** for resolved positions (on-chain CTF redemption)
 - Dashboard at http://localhost:8080 (FastAPI + WebSocket)
 - Trade history persisted to CSV with redemption status tracking
+
+
+## POLY_HFT strategy toggle
+
+## Strategy Toggle (Current vs Legacy)
+
+### Current Strategy (`strategy.py` / `evaluate_signal_current`)
+- **Trend candles**: First 3 candles *inside* the 5-minute window
+- **Trigger**: 4th candle inside window (index 3)
+- **Wick check**: `wick < body × 0.5 OR wick < ATR × 0.1`
+- **Signal reasons**: `B_Breakout_UP_PTB`, `B_Breakout_DN_PTB`
+- **PTB**: Uses `ptb` (any source, first wins)
+
+### Legacy Strategy (`strategy_legacy.py` / `evaluate_signal_legacy`)
+- **Trend candles**: Last 3 candles *before* window start (pre-window 1m klines)
+- **Trigger**: First candle *inside* the window
+- **Wick check**: `wick < body × 2.0 OR wick < ATR × 0.3`
+- **Volume check**: Does NOT reject signal — only changes reason code
+- **Signal reasons**: `B_VolBreakout_UP_PTB`, `B_Breakout_UP_PTB`, `B_VolBreakout_DN_PTB`, `B_Breakout_DN_PTB`
+- **PTB preference**: Prefers `ptb_binance` if available
+
+### Switching
+- **Dashboard**: Green/red indicator badge + "Switch to Legacy/Current" button
+- **API**: `POST /config/strategy_mode` with body `current` or `legacy`
+- **API**: `GET /config/strategy_mode` to check current mode
+- State field: `AppState.strategy_mode` (default `"current"`)
+
+
+## POLY_HFT POLY_1271
+
+**POLY_1271 signature type 3** — required for deposit wallets created via Polymarket UI; `funder` must match address used to derive API key (BUILDER_ADDRESS); `create_or_derive_api_key()` derives L2 API credentials on init
+
+
+## POLY_HFT bybit feed
+
+**Bybit V5 WebSocket** as primary price feed (replaced Binance after geo-blocking). Subscribes to `tickers.BTCUSDT` + `kline.1.BTCUSDT`. Seeds last 60 klines via Bybit REST on connect.
+
+
+## POLY_HFT auto redeem loop
+
+**Auto-redeem loop** (in `main.py`, `redemption_loop()`): Polls every `REDEMPTION_POLL_SECS` (default 30s), checks each unsettled trade against CTF `payoutDenominator`, calls `redeemPositions` via collateral adapter when condition resolves, updates `settled`, `redemption_tx`, `redemption_error` on Trade record. Controlled by `REDEMPTION_ENABLED` env var.
+
+
+## POLY_HFT wallet addresses
+
+**EOA Address:** `0xa910a5042211815f5FC332EA02399426486De58a`
+**FUNDER_ADDRESS (API key address):** `0x8142f52147c840dad2b6dc1e2f3b8aa52b7e234c` — MUST match BUILDER_ADDRESS
+**Deposit wallet (NOT used):** `0x49Cf5f787f379553c5Eab25c890E0d7e9c80d4D5`
+Balance types: CLOB balance (trading account via `get_balance_allowance`) and on-chain wallet balance (POL, USDC.e, USDC, pUSD via Polygon RPC). Dashboard shows on-chain `pusd`.
+
+
+## POLY_HFT status 2026-05-19
+
+**All bugs from 2026-05-19 fixed and verified**: side assignment, balance_allowance params, FUNDER_ADDRESS mismatch. Manual test trades placed 2026-05-19: $1 UP orders fired via direct script — confirmed POLY_1271 + BUILDER_ADDRESS as funder works correctly. Binance WebSocket geo-blocked — Bybit V5 WebSocket is primary feed. Token IDs refresh every 5min at window boundary.

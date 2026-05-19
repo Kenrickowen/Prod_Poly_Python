@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import FileResponse, HTMLResponse, Response
 import uvicorn
 
@@ -54,6 +54,18 @@ class Dashboard:
             finally:
                 if ws in self._ws_clients:
                     self._ws_clients.remove(ws)
+
+        @self.app.post("/config/strategy_mode")
+        async def set_strategy_mode(body: bytes = Body(..., media_type="text/plain")) -> dict[str, str]:
+            mode = body.decode("utf-8").strip()
+            if mode not in ("current", "legacy"):
+                return {"error": "Invalid mode. Use 'current' or 'legacy'."}
+            self.state.strategy_mode = mode
+            return {"strategy_mode": mode}
+
+        @self.app.get("/config/strategy_mode")
+        async def get_strategy_mode() -> dict[str, str]:
+            return {"strategy_mode": self.state.strategy_mode}
 
         @self.app.get("/state")
         async def get_state() -> dict[str, Any]:
@@ -170,6 +182,7 @@ class Dashboard:
             "last_kline_time_ms": self.state.last_kline_time_ms,
             "last_ticker_time_ms": self.state.last_ticker_time_ms,
             "last_poly_odds_time_ms": self.state.last_poly_odds_time_ms,
+            "strategy_mode": self.state.strategy_mode,
             "klines": klines,
             "trade_history": trade_history,
         }
@@ -222,11 +235,21 @@ class Dashboard:
     #kline-chart { width: 100%; height: 240px; display: block; }
     .table-wrap { max-width: 1400px; overflow-x: auto; }
     th { white-space: nowrap; }
+    .strategy-btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+    .strategy-btn:hover { background: #2ea043; }
+    .strategy-btn.legacy { background: #da3633; }
+    .strategy-btn.legacy:hover { background: #f85149; }
+    .strategy-indicator { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; background: #238636; color: #fff; }
+    .strategy-indicator.legacy { background: #da3633; }
   </style>
 </head>
 <body>
   <h1>Polymarket BTC 5m Breakout</h1>
   <p class="subtitle">Strategy B - Binance BTC -> Polymarket CLOB</p>
+  <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+    <span id="strategy-indicator" class="strategy-indicator">CURRENT</span>
+    <button id="strategy-toggle" class="strategy-btn" onclick="toggleStrategy()">Switch to Legacy</button>
+  </div>
   <div class="topbar">
     <div class="clock">
       <div class="label">Project Time GMT+7</div>
@@ -470,6 +493,42 @@ class Dashboard:
       caption.textContent = `${data.length} candles · last ${formatTime(last.time)} · O ${last.open.toFixed(1)} H ${last.high.toFixed(1)} L ${last.low.toFixed(1)} C ${last.close.toFixed(1)}`;
     }
 
+    async function toggleStrategy() {
+      const indicator = document.getElementById('strategy-indicator');
+      const btn = document.getElementById('strategy-toggle');
+      const current = indicator.textContent === 'LEGACY' ? 'legacy' : 'current';
+      const next = current === 'current' ? 'legacy' : 'current';
+      try {
+        const resp = await fetch('/config/strategy_mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: next,
+        });
+        const json = await resp.json();
+        if (json.error) {
+          alert('Error: ' + json.error);
+        }
+      } catch (e) {
+        alert('Failed to switch strategy: ' + e);
+      }
+    }
+
+    function updateStrategyUI(mode) {
+      const indicator = document.getElementById('strategy-indicator');
+      const btn = document.getElementById('strategy-toggle');
+      if (mode === 'legacy') {
+        indicator.textContent = 'LEGACY';
+        indicator.className = 'strategy-indicator legacy';
+        btn.textContent = 'Switch to Current';
+        btn.className = 'strategy-btn legacy';
+      } else {
+        indicator.textContent = 'CURRENT';
+        indicator.className = 'strategy-indicator';
+        btn.textContent = 'Switch to Legacy';
+        btn.className = 'strategy-btn';
+      }
+    }
+
     const ws = new WebSocket(`ws://${location.host}/ws`);
     const statusEl = document.getElementById('ws-status');
     tickClocks();
@@ -481,6 +540,9 @@ class Dashboard:
 
     ws.onmessage = (e) => {
       const d = JSON.parse(e.data);
+
+      // Strategy mode indicator
+      updateStrategyUI(d.strategy_mode || 'current');
 
       // Price feeds
       document.getElementById('last-price').textContent = d.last_price ? d.last_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
