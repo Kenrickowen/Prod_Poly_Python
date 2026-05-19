@@ -162,7 +162,7 @@ class AppState:
     last_signal_check_ms: int = 0
     last_signal_status: str = ""
     last_signal_reason: str = ""
-    strategy_mode: str = "current"  # "current" | "legacy"
+    strategy_mode: str = "t3"  # "t3" | "legacy" | "current"
 
     def push_kline(self, candle: Candle) -> None:
         existing = next((i for i, c in enumerate(self.klines) if c.open_time_ms == candle.open_time_ms), -1)

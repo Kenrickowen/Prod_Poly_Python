@@ -140,8 +140,11 @@ def evaluate_signal_current(state: AppState, now_ms: int) -> tuple[Optional[Sign
 
 
 def evaluate_signal(state: AppState, now_ms: int) -> tuple[Optional[Signal], Optional[SignalRejection]]:
-    """Dispatcher — routes to current or legacy strategy based on state.strategy_mode."""
+    """Dispatcher — routes to current, legacy, or T3 strategy based on state.strategy_mode."""
     if state.strategy_mode == "legacy":
         from polymarket_python.strategy_legacy import evaluate_signal_legacy
         return evaluate_signal_legacy(state, now_ms)
+    if state.strategy_mode == "t3":
+        from polymarket_python.strategy_T3 import evaluate_signal_T3
+        return evaluate_signal_T3(state, now_ms)
     return evaluate_signal_current(state, now_ms)

@@ -34,8 +34,9 @@ polymarket_python/
 ├── state.py               # Window reset, PTB capture, first-in-window tracking
 ├── indicators.py           # ATR, volume SMA, wick checks (current strategy)
 ├── guardrails.py           # Time-based trade restrictions
-├── strategy.py             # Strategy B signal evaluation (current) + dispatcher
-├── strategy_legacy.py      # Strategy B legacy (from Rust breakout.rs) — NEW
+├── strategy.py             # Dispatcher (current + legacy + t3)
+├── strategy_T3.py           # T+3 strategy — fires 5s before Candle 3 closes, homogeneous color check
+├── strategy_legacy.py      # Strategy B legacy (from Rust breakout.rs)
 ├── binance_client.py       # Binance WebSocket kline + ticker, REST seed (fallback)
 ├── bybit_client.py         # Bybit V5 WebSocket kline + ticker, REST seed + certifi SSL (primary feed)
 ├── polymarket_client.py    # py-clob-client-v2 with POLY_1271 deposit wallet (sig type 3) + WebSocket feed; all sync SDK calls wrapped in asyncio.to_thread
@@ -68,16 +69,17 @@ Documentation/
 
 ---
 
-## Strategy Toggle (Current vs Legacy)
+## Strategy Toggle (T3 vs Legacy)
 
-The bot supports switching between two Strategy B implementations at runtime via the dashboard.
+The bot supports switching between two active strategies at runtime via the dashboard dropdown. The "current" strategy is preserved in code but hidden from the UI.
 
-### Current Strategy (`strategy.py` / `evaluate_signal_current`)
-- **Trend candles**: First 3 candles *inside* the 5-minute window
-- **Trigger**: 4th candle inside window (index 3)
-- **Wick check**: `wick < body × 0.5 OR wick < ATR × 0.1`
-- **Signal reasons**: `B_Breakout_UP_PTB`, `B_Breakout_DN_PTB`
-- **PTB**: Uses `ptb` (any source, first wins)
+### T3 Strategy (`strategy_T3.py` / `evaluate_signal_T3`) — DEFAULT
+- **Trend candles**: Candles T+1, T+2, T+3 (first 3 inside window)
+- **Homogeneity check**: all 3 candles must be same color — mixed = no trade
+- **Trigger**: Candle 3 (index 2, T+3)
+- **Fire time**: within 5s of Candle 3 close (`is_trigger_ready()`)
+- **Fire price**: `state.last_price` if trigger still forming, else `trigger.close`
+- **Signal reasons**: `T3_Breakout_UP`, `T3_Breakout_DN`
 
 ### Legacy Strategy (`strategy_legacy.py` / `evaluate_signal_legacy`)
 - **Trend candles**: Last 3 candles *before* window start (pre-window 1m klines)
@@ -88,10 +90,10 @@ The bot supports switching between two Strategy B implementations at runtime via
 - **PTB preference**: Prefers `ptb_binance` if available
 
 ### Switching
-- **Dashboard**: Green/red indicator badge + "Switch to Legacy/Current" button
-- **API**: `POST /config/strategy_mode` with body `current` or `legacy`
+- **Dashboard**: dropdown select — "T3 (Candle 3)" or "Legacy"
+- **API**: `POST /config/strategy_mode` with body `t3` or `legacy`
 - **API**: `GET /config/strategy_mode` to check current mode
-- State field: `AppState.strategy_mode` (default `"current"`)
+- State field: `AppState.strategy_mode` (default `"t3"`)
 
 ---
 
@@ -110,8 +112,8 @@ The bot supports switching between two Strategy B implementations at runtime via
   - Controlled by `REDEMPTION_ENABLED` env var
 - **Auto-fetch market** from Gamma API on startup AND on every new 5m window (token IDs change per window)
 - **Polymarket WebSocket** — subscribes to `book` channel for real-time bid/ask
-- **Strategy dispatch** via `evaluate_signal()` in `strategy.py` — routes to current or legacy based on `state.strategy_mode`
-- **Dashboard strategy toggle** — `POST /config/strategy_mode`, indicator badge + button in UI
+- **Strategy dispatch** via `evaluate_signal()` in `strategy.py` — routes to t3, legacy, or current based on `state.strategy_mode`
+- **Dashboard strategy dropdown** — T3 (Candle 3, default) or Legacy; "current" (Candle 4) preserved in code but hidden from UI
 - **PTB captured at window open** from first price update (Bybit ticker — first wins)
 - **Guardrails**: no trades in final 90s (60s chainlink guard removed — 2026-05-19)
 - **Position sizing**: $1 per trade (configurable via `FIXED_TRADE_USD`)
@@ -251,3 +253,5 @@ Balance types: CLOB balance (trading account via `get_balance_allowance`) and on
 **All bugs from 2026-05-19 fixed and verified**: side assignment, balance_allowance params, FUNDER_ADDRESS mismatch. Manual test trades placed 2026-05-19: $1 UP orders fired via direct script — confirmed POLY_1271 + BUILDER_ADDRESS as funder works correctly. Binance WebSocket geo-blocked — Bybit V5 WebSocket is primary feed. Token IDs refresh every 5min at window boundary.
 
 **Trade execution speed improvements (2026-05-19)**: Evaluation loop now polls every 0.5s (was 5s). Duplicate HTTP call removed. All sync Polymarket SDK calls run in thread pool via `asyncio.to_thread()`.
+
+**T3 strategy added (2026-05-19)**: `strategy_T3.py` — fires on Candle 3, homogeneous color check (all 3 green = UP, all 3 red = DOWN). Fires 5s before Candle 3 closes. Default strategy mode is now `t3`. Dashboard dropdown offers T3 or Legacy only.

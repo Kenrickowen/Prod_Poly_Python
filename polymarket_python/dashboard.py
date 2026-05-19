@@ -58,8 +58,8 @@ class Dashboard:
         @self.app.post("/config/strategy_mode")
         async def set_strategy_mode(body: bytes = Body(..., media_type="text/plain")) -> dict[str, str]:
             mode = body.decode("utf-8").strip()
-            if mode not in ("current", "legacy"):
-                return {"error": "Invalid mode. Use 'current' or 'legacy'."}
+            if mode not in ("legacy", "t3"):
+                return {"error": "Invalid mode. Use 't3' or 'legacy'."}
             self.state.strategy_mode = mode
             return {"strategy_mode": mode}
 
@@ -246,7 +246,10 @@ class Dashboard:
   <p class="subtitle">Strategy B - Binance BTC -> Polymarket CLOB</p>
   <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
     <span id="strategy-indicator" class="strategy-indicator">CURRENT</span>
-    <button id="strategy-toggle" class="strategy-btn" onclick="toggleStrategy()">Switch to Legacy</button>
+    <select id="strategy-select" onchange="setStrategy(this.value)" style="background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer;">
+      <option value="t3">T3 (Candle 3)</option>
+      <option value="legacy">Legacy</option>
+    </select>
   </div>
   <div class="topbar">
     <div class="clock">
@@ -486,16 +489,12 @@ class Dashboard:
       caption.textContent = `${data.length} candles · last ${formatTime(last.time)} · O ${last.open.toFixed(1)} H ${last.high.toFixed(1)} L ${last.low.toFixed(1)} C ${last.close.toFixed(1)}`;
     }
 
-    async function toggleStrategy() {
-      const indicator = document.getElementById('strategy-indicator');
-      const btn = document.getElementById('strategy-toggle');
-      const current = indicator.textContent === 'LEGACY' ? 'legacy' : 'current';
-      const next = current === 'current' ? 'legacy' : 'current';
+    async function setStrategy(mode) {
       try {
         const resp = await fetch('/config/strategy_mode', {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
-          body: next,
+          body: mode,
         });
         const json = await resp.json();
         if (json.error) {
@@ -508,17 +507,22 @@ class Dashboard:
 
     function updateStrategyUI(mode) {
       const indicator = document.getElementById('strategy-indicator');
-      const btn = document.getElementById('strategy-toggle');
+      const select = document.getElementById('strategy-select');
       if (mode === 'legacy') {
         indicator.textContent = 'LEGACY';
         indicator.className = 'strategy-indicator legacy';
-        btn.textContent = 'Switch to Current';
-        btn.className = 'strategy-btn legacy';
+        indicator.style.background = '#da3633';
+        if (select) select.value = 'legacy';
+      } else if (mode === 't3') {
+        indicator.textContent = 'T3';
+        indicator.className = 'strategy-indicator';
+        indicator.style.background = '#238636';
+        if (select) select.value = 't3';
       } else {
+        // 'current' — not shown in dropdown but supported in code
         indicator.textContent = 'CURRENT';
         indicator.className = 'strategy-indicator';
-        btn.textContent = 'Switch to Legacy';
-        btn.className = 'strategy-btn';
+        indicator.style.background = '#8b949e';
       }
     }
 
