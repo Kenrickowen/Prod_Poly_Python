@@ -1,4 +1,4 @@
-"""Polymarket CLOB client using py-clob-client-v2 SDK with EOA signature type 0."""
+"""Polymarket CLOB client using py-clob-client-v2 SDK with POLY_1271 deposit wallet signature type 3."""
 from __future__ import annotations
 
 import asyncio
@@ -14,13 +14,15 @@ from py_clob_client_v2 import (
     PartialCreateOrderOptions,
     Side,
 )
+from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
 
 from polymarket_python.config import POLYMARKET_HOST, CHAIN_ID
 
 logger = logging.getLogger(__name__)
 
-# Signature type 0 = EOA (wallet pays its own gas)
-SIGNATURE_TYPE_EOA = 0
+# Signature type 3 = POLY_1271 (deposit wallet flow — required for wallets created via Polymarket UI)
+# The funder (FUNDER_ADDRESS) should be the deposit wallet address from the Polymarket UI
+SIGNATURE_TYPE_POLY_1271 = 3
 
 # Polymarket WebSocket endpoint
 POLYMARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -29,7 +31,8 @@ POLYMARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 class PolymarketClient:
     """
     Polymarket CLOB client using official py-clob-client-v2.
-    Uses EOA wallet (signature type 0) — wallet pays its own gas.
+    Uses POLY_1271 deposit wallet (signature type 3) — required for wallets
+    created via the Polymarket UI. The funder is the deposit wallet address.
     """
 
     def __init__(self):
@@ -42,22 +45,27 @@ class PolymarketClient:
         self.funder_address = funder_address
         self._key = private_key
 
-        # L1 auth — derive API credentials
+        # Step 1: Create a raw L1 client to derive API credentials (no signature_type yet)
         temp_client = ClobClient(
             host=POLYMARKET_HOST,
             key=self._key,
             chain_id=CHAIN_ID,
         )
-        self._creds = temp_client.create_or_derive_api_key()
-        logger.info("[POLY] API credentials derived")
+        try:
+            self._creds = temp_client.create_or_derive_api_key()
+            logger.info("[POLY] API credentials derived")
+        except Exception as e:
+            logger.warning(f"[POLY] Could not derive API credentials: {e}")
+            self._creds = None
 
-        # L2 auth — fully authenticated client with signature type 0 (EOA)
+        # Step 2: Create the authenticated client with POLY_1271 signature type 3
+        # The CLOB uses the funder (deposit wallet) for order validation
         self._client = ClobClient(
             host=POLYMARKET_HOST,
             key=self._key,
             chain_id=CHAIN_ID,
             creds=self._creds,
-            signature_type=SIGNATURE_TYPE_EOA,
+            signature_type=SIGNATURE_TYPE_POLY_1271,
             funder=self.funder_address,
         )
         logger.info(f"[POLY] Client initialized for {self.funder_address}")
@@ -185,7 +193,8 @@ class PolymarketClient:
     async def get_balance(self) -> float:
         """Get USDC collateral balance."""
         try:
-            result = self._client.get_balance_allowance()
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            result = self._client.get_balance_allowance(params)
             return float(result.get("balance", 0))
         except Exception as e:
             logger.warning(f"[POLY] get_balance failed: {e}")
