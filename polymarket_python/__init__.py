@@ -4,10 +4,9 @@ from polymarket_python.config import *
 from polymarket_python.strategy import evaluate_signal
 from polymarket_python.scheduler import calculate_window_start, window_elapsed_ms
 from polymarket_python.indicators import update_indicators, compute_atr, compute_vol_sma
-from polymarket_python.state import reset_window, capture_ptb_from_binance, capture_ptb_from_chainlink
+from polymarket_python.state import reset_window, capture_ptb_from_binance
 from polymarket_python.guardrails import should_trade
 from polymarket_python.binance_client import BinanceClient
-from polymarket_python.chainlink_client import fetch_btc_price
 from polymarket_python.bybit_client import BybitClient
 
 try:

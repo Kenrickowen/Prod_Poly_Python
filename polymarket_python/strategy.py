@@ -6,7 +6,7 @@ Signal fires when ALL conditions are true:
 2. Trigger: 3rd closed candle inside window confirms trend before final cutoff
 3. PTB Side Check: UP → trigger.close > PTB, DOWN → trigger.close < PTB
 4. Wick Check: adverse wick < body × 0.5 OR both wicks < ATR × 0.1
-5. Chainlink Guard: trigger forms after 60s into window
+5. Cutoff Guard: no signals in final 90s
 6. Odds Ready: both poly_up_odds and poly_down_odds present
 7. Window State: not already signaled or traded
 """
@@ -17,7 +17,7 @@ from polymarket_python.models import AppState, Candle, Signal, SignalDirection
 from polymarket_python.state import get_signal_ptb
 from polymarket_python.indicators import check_wick
 from polymarket_python.scheduler import window_elapsed_ms
-from polymarket_python.config import FIRST_TRIGGER_DELAY_MS, NO_TRADE_CUTOFF_SECS
+from polymarket_python.config import NO_TRADE_CUTOFF_SECS
 
 
 @dataclass
@@ -80,11 +80,7 @@ def evaluate_signal_current(state: AppState, now_ms: int) -> tuple[Optional[Sign
 
     # Guard: no signals in final 90s
     if elapsed_s >= (5 * 60) - NO_TRADE_CUTOFF_SECS:
-        return None, SignalRejection("ChainlinkGuard")
-
-    # Guard: first 60s — chainlink guard
-    if elapsed_ms < FIRST_TRIGGER_DELAY_MS:
-        return None, SignalRejection("TooEarly")
+        return None, SignalRejection("CutoffGuard")
 
     # Get first 3 candles inside window for trend
     inside = get_inside_window_candles(state)

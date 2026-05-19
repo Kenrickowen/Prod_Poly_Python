@@ -31,12 +31,10 @@ from polymarket_python.config import (
 )
 from polymarket_python.models import AppState, Candle
 from polymarket_python.bybit_client import BybitClient
-from polymarket_python.chainlink_client import fetch_btc_price
 from polymarket_python.polymarket_client import PolymarketClient
 from polymarket_python.strategy import evaluate_signal
 from polymarket_python.state import (
     capture_ptb_from_binance,
-    capture_ptb_from_chainlink,
     record_first_in_window,
     reset_window,
 )
@@ -264,21 +262,7 @@ async def main() -> None:
 
     wallet_task = asyncio.create_task(poll_wallet_balances())
 
-    # Chainlink poll task
-    async def poll_chainlink() -> None:
-        while True:
-            await asyncio.sleep(30)
-            try:
-                price = fetch_btc_price()
-                if price and price > 0:
-                    state.chainlink_price = price
-                    now_ms = int(time.time() * 1000)
-                    capture_ptb_from_chainlink(state, price, now_ms)
-                    logger.info(f"[CHAINLINK] BTC/USD = ${price:,.2f}")
-            except Exception as e:
-                logger.debug(f"[CHAINLINK] poll error: {e}")
-
-    chainlink_task = asyncio.create_task(poll_chainlink())
+    chainlink_task = asyncio.create_task(asyncio.sleep(float("inf")))  # placeholder
 
     # Main evaluation loop
     logger.info("[MAIN] Entering main loop")
@@ -287,7 +271,7 @@ async def main() -> None:
         nonlocal token_id_up, token_id_down
 
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
             now_ms = int(time.time() * 1000)
 
             # Initialize window on first run
@@ -358,29 +342,6 @@ async def main() -> None:
                     state.last_signal_status = "REJECTED"
                     state.last_signal_reason = rejection.reason
                     logger.debug(f"[SIGNAL] Rejected: {rejection.reason}")
-
-            # Update Polymarket odds
-            market, odds_up, odds_down = await fetch_current_btc_odds()
-            if market:
-                state.poly_market_slug = market.slug
-                state.poly_market_question = market.question
-                state.poly_market_condition_id = market.condition_id
-                state.poly_market_neg_risk = market.neg_risk
-                if market.token_id_up != token_id_up or market.token_id_down != token_id_down:
-                    token_id_up, token_id_down = market.token_id_up, market.token_id_down
-                    trader.token_id_up = token_id_up
-                    trader.token_id_down = token_id_down
-                    poly_client.stop_ws_feed()
-                    poly_client.start_ws_feed([token_id_up, token_id_down])
-                    logger.info(f"[WINDOW] Synced market: UP={token_id_up}, DOWN={token_id_down}")
-            if odds_up is None:
-                odds_up = await poly_client.get_odds(token_id_up)
-            if odds_up is not None:
-                state.poly_up_odds = float(odds_up)
-            if odds_down is None:
-                odds_down = await poly_client.get_odds(token_id_down)
-            if odds_down is not None:
-                state.poly_down_odds = float(odds_down)
 
             dashboard.broadcast(dashboard._state_snapshot())
 

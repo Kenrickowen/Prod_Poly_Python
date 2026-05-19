@@ -133,7 +133,6 @@ class Dashboard:
         return {
             "last_price": self.state.last_price,
             "price_source": self.state.price_source,
-            "chainlink_price": self.state.chainlink_price,
             "poly_up_odds": self.state.poly_up_odds,
             "poly_down_odds": self.state.poly_down_odds,
             "poly_market_slug": self.state.poly_market_slug,
@@ -154,7 +153,6 @@ class Dashboard:
                 "ptb": window.ptb,
                 "ptb_source": window.ptb_source,
                 "ptb_binance": window.ptb_binance,
-                "ptb_chainlink": window.ptb_chainlink,
                 "signal": signal_value,
                 "traded": window.traded,
                 "signal_evaluated": window.signal_evaluated,
@@ -276,11 +274,6 @@ class Dashboard:
       <h3>BTC Price</h3>
       <div class="big-val" id="last-price">--</div>
       <div class="small-val" id="last-price-time">--</div>
-    </div>
-    <div class="card">
-      <h3>Chainlink BTC Feed</h3>
-      <div class="big-val" id="chainlink-price">--</div>
-      <div class="small-val">Polygon Oracle</div>
     </div>
     <div class="card">
       <h3>Wallet Balances</h3>
@@ -549,8 +542,6 @@ class Dashboard:
       const priceTs = d.last_ticker_time_ms || d.last_kline_time_ms;
       const priceSource = d.price_source || 'Market feed';
       document.getElementById('last-price-time').textContent = priceTs ? `${priceSource} · ${formatTime(priceTs)}` : priceSource;
-      document.getElementById('chainlink-price').textContent = d.chainlink_price ? d.chainlink_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
-
       // Wallet balances
       const wallet = d.wallet || {};
       document.getElementById('wallet-pol').textContent = wallet.error ? '--' : formatToken(wallet.pol, 6);

@@ -158,7 +158,7 @@ class PolymarketClient:
     async def get_market(self, condition_id: str) -> dict | None:
         """Get CLOB market info by condition_id."""
         try:
-            return self._client.get_market(condition_id)
+            return await asyncio.to_thread(self._client.get_market, condition_id)
         except Exception as e:
             logger.warning(f"[POLY] get_market failed: {e}")
             return None
@@ -171,16 +171,16 @@ class PolymarketClient:
             if cached["bid"] > 0 and cached["ask"] > 0:
                 return (cached["bid"] + cached["ask"]) / 2
 
-        # Fallback to REST
+        # Fallback to REST — run in thread to avoid blocking event loop
         try:
-            spread = self._client.get_spread(token_id)
+            spread = await asyncio.to_thread(self._client.get_spread, token_id)
             if spread:
                 bid = spread.get("bid") or spread.get("best_bid")
                 ask = spread.get("ask") or spread.get("best_ask")
                 if bid and ask:
                     return (float(bid) + float(ask)) / 2
 
-            mid = self._client.get_midpoint(token_id)
+            mid = await asyncio.to_thread(self._client.get_midpoint, token_id)
             if mid is not None:
                 if isinstance(mid, dict):
                     return float(mid.get("mid", 0)) or None
@@ -194,7 +194,7 @@ class PolymarketClient:
         """Get USDC collateral balance."""
         try:
             params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
-            result = self._client.get_balance_allowance(params)
+            result = await asyncio.to_thread(self._client.get_balance_allowance, params)
             return float(result.get("balance", 0))
         except Exception as e:
             logger.warning(f"[POLY] get_balance failed: {e}")
@@ -212,9 +212,7 @@ class PolymarketClient:
         Uses tick_size and neg_risk from market info.
         """
         try:
-            tick_size = self._client.get_tick_size(token_id)
-            neg_risk = self._client.get_neg_risk(token_id)
-
+            tick_size, neg_risk = await asyncio.to_thread(self._get_tick_and_negrisk, token_id)
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
@@ -226,7 +224,8 @@ class PolymarketClient:
                 neg_risk=neg_risk,
             )
 
-            response = self._client.create_and_post_order(
+            response = await asyncio.to_thread(
+                self._client.create_and_post_order,
                 order_args=order_args,
                 options=options,
                 order_type=OrderType.GTC,
@@ -246,8 +245,7 @@ class PolymarketClient:
     ) -> dict | None:
         """Place a market order where amount_usd is the USDC spend amount."""
         try:
-            tick_size = self._client.get_tick_size(token_id)
-            neg_risk = self._client.get_neg_risk(token_id)
+            tick_size, neg_risk = await asyncio.to_thread(self._get_tick_and_negrisk, token_id)
             order_args = MarketOrderArgs(
                 token_id=token_id,
                 amount=amount_usd,
@@ -255,7 +253,8 @@ class PolymarketClient:
                 order_type=order_type,
             )
             options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
-            response = self._client.create_and_post_market_order(
+            response = await asyncio.to_thread(
+                self._client.create_and_post_market_order,
                 order_args=order_args,
                 options=options,
                 order_type=order_type,
@@ -265,6 +264,11 @@ class PolymarketClient:
         except Exception as e:
             logger.error("[POLY] place_market_order failed: %s", e)
             return None
+
+    def _get_tick_and_negrisk(self, token_id: str) -> tuple:
+        tick_size = self._client.get_tick_size(token_id)
+        neg_risk = self._client.get_neg_risk(token_id)
+        return tick_size, neg_risk
 
     async def cancel_all(self) -> dict | None:
         """Cancel all open orders."""

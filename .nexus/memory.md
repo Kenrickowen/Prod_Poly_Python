@@ -38,8 +38,7 @@ polymarket_python/
 ├── strategy_legacy.py      # Strategy B legacy (from Rust breakout.rs) — NEW
 ├── binance_client.py       # Binance WebSocket kline + ticker, REST seed (fallback)
 ├── bybit_client.py         # Bybit V5 WebSocket kline + ticker, REST seed + certifi SSL (primary feed)
-├── chainlink_client.py     # Chainlink Data Engine REST API (live BTC/USD)
-├── polymarket_client.py    # py-clob-client-v2 with POLY_1271 deposit wallet (sig type 3) + WebSocket feed
+├── polymarket_client.py    # py-clob-client-v2 with POLY_1271 deposit wallet (sig type 3) + WebSocket feed; all sync SDK calls wrapped in asyncio.to_thread
 ├── polymarket_public_client.py  # Public Gamma API market discovery + odds fetching
 ├── trader.py               # Trade execution + Trade record creation
 ├── trade_store.py          # CSV persistence for trade history (incl. redemption fields)
@@ -113,8 +112,8 @@ The bot supports switching between two Strategy B implementations at runtime via
 - **Polymarket WebSocket** — subscribes to `book` channel for real-time bid/ask
 - **Strategy dispatch** via `evaluate_signal()` in `strategy.py` — routes to current or legacy based on `state.strategy_mode`
 - **Dashboard strategy toggle** — `POST /config/strategy_mode`, indicator badge + button in UI
-- **PTB captured at window open** from first price update (Bybit ticker or chainlink — first wins)
-- **Guardrails**: no trades first 60s, no trades in final 90s
+- **PTB captured at window open** from first price update (Bybit ticker — first wins)
+- **Guardrails**: no trades in final 90s (60s chainlink guard removed — 2026-05-19)
 - **Position sizing**: $1 per trade (configurable via `FIXED_TRADE_USD`)
 - **Trade history CSV** at `data/trade_history.csv` — includes redemption fields
 
@@ -174,15 +173,12 @@ The bot supports switching between two Strategy B implementations at runtime via
 - All bugs from 2026-05-19 **fixed and verified**: side assignment, balance_allowance params, FUNDER_ADDRESS mismatch
 - **Manual test trades placed (2026-05-19)**: $1 UP orders fired via direct script (not via running bot) — confirmed POLY_1271 + BUILDER_ADDRESS as funder works correctly
 - Binance WebSocket is geo-blocked — Bybit V5 WebSocket is primary feed
-- Chainlink uses Data Engine REST API (`data.chain.link/api/live-data-engine-stream-data`)
-- Token IDs refresh every 5min at window boundary (new slug = new token IDs)
-- Dashboard shows Trade History table with redemption status (settled, tx, error)
-- Redemption loop runs in background, updates CSV on each check
-- Standalone `redeem_polymarket_position.py` for manual redemption with `--execute --wait`
-- **Tests**: `test_strategy.py` and `test_strategy_full.py` cover signal triggering + all rejection paths.
-- **Strategy toggle added (2026-05-19):** `strategy_legacy.py` new file, `strategy.py` dispatcher, dashboard toggle button + indicator badge
-- **Dashboard POST fix (2026-05-19):** `/config/strategy_mode` endpoint now accepts raw `Body(...)` bytes to handle `text/plain` POST from dashboard toggle button
-- **CSV pre-created (2026-05-19):** `data/trade_history.csv` initialized with header row so it's always available for download, even before any trades
+- Chainlink removed (2026-05-19): `chainlink_client.py` deleted, all chainlink references removed from `__init__.py`, `main.py`, `strategy.py`, `state.py`, `dashboard.py`, `models.py`; 60s trigger delay removed from strategy
+- **Trade execution speed improvements (2026-05-19)**:
+  - Evaluation loop sleep reduced from 5s to 0.5s
+  - Duplicate `fetch_current_btc_odds()` call removed (was 6 HTTP calls/cycle, now 3)
+  - All sync `py-clob-client-v2` SDK calls wrapped in `asyncio.to_thread()` (non-blocking): `get_spread`, `get_midpoint`, `get_market`, `get_balance`, `get_tick_size`, `get_neg_risk`, `create_and_post_order`, `create_and_post_market_order`
+  - No more blocking event loop on Polymarket CLOB API calls
 
 ## POLY_HFT purpose and architecture
 
@@ -253,3 +249,5 @@ Balance types: CLOB balance (trading account via `get_balance_allowance`) and on
 ## POLY_HFT status 2026-05-19
 
 **All bugs from 2026-05-19 fixed and verified**: side assignment, balance_allowance params, FUNDER_ADDRESS mismatch. Manual test trades placed 2026-05-19: $1 UP orders fired via direct script — confirmed POLY_1271 + BUILDER_ADDRESS as funder works correctly. Binance WebSocket geo-blocked — Bybit V5 WebSocket is primary feed. Token IDs refresh every 5min at window boundary.
+
+**Trade execution speed improvements (2026-05-19)**: Evaluation loop now polls every 0.5s (was 5s). Duplicate HTTP call removed. All sync Polymarket SDK calls run in thread pool via `asyncio.to_thread()`.
