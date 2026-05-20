@@ -4,10 +4,34 @@ import time
 
 from polymarket_python.models import AppState, Signal, SignalDirection, Trade
 from polymarket_python.polymarket_client import PolymarketClient
-from polymarket_python.config import CAPITAL, FIXED_TRADE_USD, POSITION_FRACTION
+from polymarket_python.config import CAPITAL
 from polymarket_python.trade_store import append_trade
 
 logger = logging.getLogger(__name__)
+
+
+def account_equity(state: AppState) -> float:
+    cash = state.current_balance if state.wallet_pusd_balance is not None else 0.0
+    open_cost_basis = sum(
+        trade.size
+        for trade in state.trade_history
+        if not trade.settled and not trade.redemption_tx
+    )
+    return cash + open_cost_basis
+
+
+def calculate_position_size_usd(state: AppState) -> float:
+    if state.position_size_mode == "percent":
+        equity = account_equity(state)
+        if equity <= 0:
+            equity = state.initial_balance if state.initial_balance > 0 else CAPITAL
+        spend = equity * max(state.position_equity_percent, 0.0) / 100
+    else:
+        spend = max(state.position_fixed_usd, 0.0)
+
+    if state.wallet_pusd_balance is not None:
+        spend = min(spend, max(state.current_balance, 0.0))
+    return spend
 
 
 class Trader:
@@ -31,7 +55,10 @@ class Trader:
             logger.warning(f"[TRADER] Could not get odds for {token_id}")
             odds = 0.5  # fallback
 
-        spend_usd = FIXED_TRADE_USD if FIXED_TRADE_USD > 0 else CAPITAL * POSITION_FRACTION
+        spend_usd = calculate_position_size_usd(state)
+        if spend_usd <= 0:
+            logger.warning("[TRADER] Position size is zero; skipping trade")
+            return False
         size = spend_usd / odds
         logger.info(
             f"[TRADER] {direction.value}: spend=${spend_usd:.2f}, size={size:.2f} tokens at price={odds:.4f}, "

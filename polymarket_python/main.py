@@ -21,9 +21,12 @@ if env_path.exists():
                 os.environ[key.strip()] = value.strip()
 
 from polymarket_python.config import (
+    CAPITAL,
     DASHBOARD_HOST,
     DASHBOARD_PORT,
+    FIXED_TRADE_USD,
     GAMMA_HOST,
+    POSITION_FRACTION,
     REDEMPTION_ENABLED,
     REDEMPTION_POLL_SECS,
     WALLET_BALANCE_POLL_SECS,
@@ -125,6 +128,8 @@ async def poll_price_fallback(state: AppState) -> None:
 
 
 def apply_wallet_balances(state: AppState, balances) -> None:
+    if state.initial_balance <= 0:
+        state.initial_balance = balances.pusd
     state.wallet_address = balances.address
     state.wallet_pol_balance = balances.pol
     state.wallet_usdc_balance = balances.usdc
@@ -132,6 +137,7 @@ def apply_wallet_balances(state: AppState, balances) -> None:
     state.wallet_pusd_balance = balances.pusd
     state.last_wallet_balance_time_ms = balances.timestamp_ms
     state.wallet_balance_error = ""
+    state.current_balance = balances.pusd
 
 
 async def main() -> None:
@@ -153,6 +159,9 @@ async def main() -> None:
     token_id_down = os.getenv("TOKEN_ID_DOWN", "")
     market_mid = None
     state = AppState()
+    state.position_size_mode = "fixed" if FIXED_TRADE_USD > 0 else "percent"
+    state.position_fixed_usd = FIXED_TRADE_USD if FIXED_TRADE_USD > 0 else CAPITAL * POSITION_FRACTION
+    state.position_equity_percent = POSITION_FRACTION * 100
     state.trade_history = load_trade_history()
     state.trades_placed = len(state.trade_history)
 
@@ -245,7 +254,6 @@ async def main() -> None:
             try:
                 balances = await asyncio.to_thread(balance_client.fetch)
                 apply_wallet_balances(state, balances)
-                state.current_balance = balances.pusd
                 dashboard.broadcast(dashboard._state_snapshot())
                 logger.info(
                     "[WALLET] POL=%.6f USDC=%.2f USDC.e=%.2f pUSD=%.2f",

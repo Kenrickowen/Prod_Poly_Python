@@ -149,12 +149,16 @@ class AppState:
     last_wallet_balance_time_ms: int = 0
 
     trades_placed: int = 0
-    initial_balance: float = 10_000.0
-    current_balance: float = 10_000.0
+    initial_balance: float = 0.0
+    current_balance: float = 0.0
     total_pnl: float = 0.0
     win_count: int = 0
     loss_count: int = 0
     trade_history: list[Trade] = field(default_factory=list)
+
+    position_size_mode: str = "fixed"
+    position_fixed_usd: float = 1.0
+    position_equity_percent: float = 1.0
 
     last_kline_time_ms: int = 0
     last_ticker_time_ms: int = 0

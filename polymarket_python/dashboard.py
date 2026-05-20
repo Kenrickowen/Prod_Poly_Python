@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 import uvicorn
 
 from polymarket_python.config import TRADE_HISTORY_CSV
-from polymarket_python.models import AppState
+from polymarket_python.models import AppState, Trade
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,32 @@ class Dashboard:
         async def get_strategy_mode() -> dict[str, str]:
             return {"strategy_mode": self.state.strategy_mode}
 
+        @self.app.post("/config/position_size")
+        async def set_position_size(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+            mode = str(body.get("mode") or "").strip().lower()
+            if mode not in ("fixed", "percent"):
+                return {"error": "Invalid mode. Use 'fixed' or 'percent'."}
+            try:
+                fixed_usd = float(body.get("fixed_usd", self.state.position_fixed_usd))
+                equity_percent = float(body.get("equity_percent", self.state.position_equity_percent))
+            except (TypeError, ValueError):
+                return {"error": "Position size values must be numbers."}
+            if fixed_usd < 0 or equity_percent < 0:
+                return {"error": "Position size values cannot be negative."}
+            if mode == "fixed" and fixed_usd <= 0:
+                return {"error": "Fixed dollar size must be greater than 0."}
+            if mode == "percent" and equity_percent <= 0:
+                return {"error": "Equity percentage must be greater than 0."}
+
+            self.state.position_size_mode = mode
+            self.state.position_fixed_usd = fixed_usd
+            self.state.position_equity_percent = equity_percent
+            return self._position_size_config()
+
+        @self.app.get("/config/position_size")
+        async def get_position_size() -> dict[str, Any]:
+            return self._position_size_config()
+
         @self.app.get("/state")
         async def get_state() -> dict[str, Any]:
             return self._state_snapshot()
@@ -87,6 +113,8 @@ class Dashboard:
         """Serialize current app state for JSON response / WebSocket."""
         window = self.state.window
         indicators = self.state.indicators
+        trade_pnls = {id(t): self._trade_pnl(t) for t in self.state.trade_history}
+        total_pnl = self._total_pnl(trade_pnls)
 
         signal_value = None
         if window.signal is not None:
@@ -101,7 +129,7 @@ class Dashboard:
                 "token_id": t.token_id,
                 "price": t.price,
                 "size": t.size,
-                "pnl": t.pnl,
+                "pnl": trade_pnls[id(t)],
                 "settled": t.settled,
                 "market_slug": t.market_slug,
                 "condition_id": t.condition_id,
@@ -172,7 +200,7 @@ class Dashboard:
                 "trades_placed": self.state.trades_placed,
                 "win_count": self.state.win_count,
                 "loss_count": self.state.loss_count,
-                "total_pnl": self.state.total_pnl,
+                "total_pnl": total_pnl,
                 "current_balance": self.state.current_balance,
                 "initial_balance": self.state.initial_balance,
             },
@@ -181,9 +209,53 @@ class Dashboard:
             "last_ticker_time_ms": self.state.last_ticker_time_ms,
             "last_poly_odds_time_ms": self.state.last_poly_odds_time_ms,
             "strategy_mode": self.state.strategy_mode,
+            "position_size": self._position_size_config(),
             "klines": klines,
             "trade_history": trade_history,
         }
+
+    def _position_size_config(self) -> dict[str, Any]:
+        return {
+            "mode": self.state.position_size_mode,
+            "fixed_usd": self.state.position_fixed_usd,
+            "equity_percent": self.state.position_equity_percent,
+        }
+
+    def _trade_current_odds(self, trade: Trade) -> float | None:
+        if trade.market_slug and trade.market_slug != self.state.poly_market_slug:
+            return None
+        if trade.token_id and trade.token_id == trade.token_id_up:
+            return self.state.poly_up_odds if trade.token_id_up else None
+        if trade.token_id and trade.token_id == trade.token_id_down:
+            return self.state.poly_down_odds if trade.token_id_down else None
+        if trade.direction.value == "UP":
+            return self.state.poly_up_odds
+        if trade.direction.value == "DOWN":
+            return self.state.poly_down_odds
+        return None
+
+    def _open_trade_value(self, trade: Trade) -> float:
+        if trade.settled or trade.redemption_tx:
+            return 0.0
+        if trade.price <= 0:
+            return trade.size
+        odds = self._trade_current_odds(trade)
+        if odds is None:
+            return trade.size
+        return (trade.size / trade.price) * odds
+
+    def _trade_pnl(self, trade: Trade) -> float:
+        if trade.settled or trade.redemption_tx:
+            return trade.pnl
+        return self._open_trade_value(trade) - trade.size
+
+    def _total_pnl(self, trade_pnls: dict[int, float]) -> float:
+        if self.state.initial_balance > 0 and self.state.wallet_pusd_balance is not None:
+            open_value = sum(self._open_trade_value(t) for t in self.state.trade_history)
+            return (self.state.current_balance + open_value) - self.state.initial_balance
+        if trade_pnls:
+            return sum(trade_pnls.values())
+        return self.state.total_pnl
 
     def _html_dashboard(self) -> str:
         """Simple dark-themed HTML dashboard with real-time WebSocket updates."""
@@ -239,6 +311,12 @@ class Dashboard:
     .strategy-btn.legacy:hover { background: #f85149; }
     .strategy-indicator { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; background: #238636; color: #fff; }
     .strategy-indicator.legacy { background: #da3633; }
+    .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+    .control-field label { display: block; color: #8b949e; font-size: 11px; margin-bottom: 4px; }
+    .control-field input, .control-field select { width: 100%; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 7px 9px; font-size: 13px; }
+    .control-btn { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .control-btn:hover { background: #2ea043; }
+    .control-status { min-height: 16px; color: #8b949e; font-size: 12px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -340,6 +418,28 @@ class Dashboard:
         <tr><td>Last Signal Check</td><td id="signal-check">--</td></tr>
         <tr><td>Signal Status</td><td id="signal-status">--</td></tr>
       </table>
+    </div>
+    <div class="card">
+      <h3>Position Size</h3>
+      <div class="control-grid">
+        <div class="control-field">
+          <label for="position-mode">Mode</label>
+          <select id="position-mode">
+            <option value="fixed">Fixed $</option>
+            <option value="percent">% Equity</option>
+          </select>
+        </div>
+        <div class="control-field">
+          <label for="position-fixed">Fixed USD</label>
+          <input id="position-fixed" type="number" min="0" step="0.01">
+        </div>
+        <div class="control-field">
+          <label for="position-percent">Equity %</label>
+          <input id="position-percent" type="number" min="0" step="0.1">
+        </div>
+        <button class="control-btn" type="button" onclick="setPositionSize()">Save</button>
+      </div>
+      <div class="control-status" id="position-status">--</div>
     </div>
   </div>
 
@@ -505,6 +605,51 @@ class Dashboard:
       }
     }
 
+    async function setPositionSize() {
+      const mode = document.getElementById('position-mode').value;
+      const fixed = Number(document.getElementById('position-fixed').value);
+      const percent = Number(document.getElementById('position-percent').value);
+      const status = document.getElementById('position-status');
+      status.textContent = 'Saving...';
+      try {
+        const resp = await fetch('/config/position_size', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, fixed_usd: fixed, equity_percent: percent }),
+        });
+        const json = await resp.json();
+        if (json.error) {
+          status.textContent = json.error;
+          status.className = 'control-status down';
+          return;
+        }
+        updatePositionSizeUI(json);
+        status.className = 'control-status up';
+      } catch (e) {
+        status.textContent = 'Failed to save position size';
+        status.className = 'control-status down';
+      }
+    }
+
+    function updatePositionSizeUI(config) {
+      if (!config) return;
+      const activeId = document.activeElement ? document.activeElement.id : '';
+      if (['position-mode', 'position-fixed', 'position-percent'].includes(activeId)) return;
+      const modeEl = document.getElementById('position-mode');
+      const fixedEl = document.getElementById('position-fixed');
+      const percentEl = document.getElementById('position-percent');
+      const status = document.getElementById('position-status');
+      modeEl.value = config.mode || 'fixed';
+      fixedEl.value = Number(config.fixed_usd || 0).toFixed(2);
+      percentEl.value = Number(config.equity_percent || 0).toFixed(2);
+      if (modeEl.value === 'percent') {
+        status.textContent = `Next trade: ${Number(config.equity_percent || 0).toFixed(2)}% of equity`;
+      } else {
+        status.textContent = `Next trade: $${Number(config.fixed_usd || 0).toFixed(2)}`;
+      }
+      status.className = 'control-status';
+    }
+
     function updateStrategyUI(mode) {
       const indicator = document.getElementById('strategy-indicator');
       const select = document.getElementById('strategy-select');
@@ -540,6 +685,7 @@ class Dashboard:
 
       // Strategy mode indicator
       updateStrategyUI(d.strategy_mode || 'current');
+      updatePositionSizeUI(d.position_size);
 
       // Price feeds
       document.getElementById('last-price').textContent = d.last_price ? d.last_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
