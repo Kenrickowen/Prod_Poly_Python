@@ -1,0 +1,20 @@
+services:
+  polymarket-bot:
+    build:
+      context: .
+    image: polymarket-bot:latest
+    container_name: polymarket-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DASHBOARD_HOST: 0.0.0.0
+      DASHBOARD_PORT: 8080
+      TRADE_HISTORY_CSV: /app/data/trade_history.csv
+    ports:
+      - "8080:8080"
+    volumes:
+      - bot-data:/app/data
+
+volumes:
+  bot-data:
