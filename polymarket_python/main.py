@@ -21,12 +21,9 @@ if env_path.exists():
                 os.environ[key.strip()] = value.strip()
 
 from polymarket_python.config import (
-    CAPITAL,
     DASHBOARD_HOST,
     DASHBOARD_PORT,
-    FIXED_TRADE_USD,
     GAMMA_HOST,
-    POSITION_FRACTION,
     REDEMPTION_ENABLED,
     REDEMPTION_POLL_SECS,
     WALLET_BALANCE_POLL_SECS,
@@ -51,6 +48,7 @@ from polymarket_python.trader import Trader
 from polymarket_python.dashboard import Dashboard
 from polymarket_python.polymarket_public_client import fetch_current_btc_odds
 from polymarket_python.redemption import PolymarketRedeemer, now_ms
+from polymarket_python.runtime_config import load_position_size
 from polymarket_python.trade_store import load_trade_history, save_trade_history
 from polymarket_python.wallet_balances import WalletBalanceClient
 
@@ -159,9 +157,7 @@ async def main() -> None:
     token_id_down = os.getenv("TOKEN_ID_DOWN", "")
     market_mid = None
     state = AppState()
-    state.position_size_mode = "fixed" if FIXED_TRADE_USD > 0 else "percent"
-    state.position_fixed_usd = FIXED_TRADE_USD if FIXED_TRADE_USD > 0 else CAPITAL * POSITION_FRACTION
-    state.position_equity_percent = POSITION_FRACTION * 100
+    load_position_size(state)
     state.trade_history = load_trade_history()
     state.trades_placed = len(state.trade_history)
 

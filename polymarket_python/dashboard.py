@@ -12,6 +12,7 @@ import uvicorn
 
 from polymarket_python.config import TRADE_HISTORY_CSV
 from polymarket_python.models import AppState, Trade
+from polymarket_python.runtime_config import save_position_size
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ class Dashboard:
             self.state.position_size_mode = mode
             self.state.position_fixed_usd = fixed_usd
             self.state.position_equity_percent = equity_percent
+            save_position_size(self.state)
             return self._position_size_config()
 
         @self.app.get("/config/position_size")
