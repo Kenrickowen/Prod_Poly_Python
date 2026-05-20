@@ -46,9 +46,10 @@ from polymarket_python.scheduler import (
 )
 from polymarket_python.trader import Trader
 from polymarket_python.dashboard import Dashboard
-from polymarket_python.polymarket_public_client import fetch_current_btc_odds
+from polymarket_python.polymarket_public_client import fetch_btc_market_by_slug, fetch_current_btc_odds
 from polymarket_python.redemption import PolymarketRedeemer, now_ms
 from polymarket_python.runtime_config import load_position_size
+from polymarket_python.settlement import recompute_trade_metrics, update_trade_from_resolved_market
 from polymarket_python.trade_store import load_trade_history, save_trade_history
 from polymarket_python.wallet_balances import WalletBalanceClient
 
@@ -160,6 +161,7 @@ async def main() -> None:
     load_position_size(state)
     state.trade_history = load_trade_history()
     state.trades_placed = len(state.trade_history)
+    recompute_trade_metrics(state)
 
     if not token_id_up or not token_id_down:
         logger.info("[MAIN] TOKEN_ID not set — fetching active BTC market from Gamma API...")
@@ -194,8 +196,97 @@ async def main() -> None:
     poly_client.start_ws_feed([token_id_up, token_id_down])
     logger.info(f"[POLY_WS] Subscribed to {token_id_up}, {token_id_down}")
 
+    async def sync_resolved_trade_pnl() -> int:
+        changed = 0
+        market_cache = {}
+        for trade in state.trade_history:
+            if trade.settled and trade.pnl != 0:
+                continue
+            if not trade.market_slug:
+                continue
+            if trade.market_slug not in market_cache:
+                market_cache[trade.market_slug] = await fetch_btc_market_by_slug(trade.market_slug)
+            market = market_cache[trade.market_slug]
+            if market and update_trade_from_resolved_market(trade, market):
+                changed += 1
+
+        if changed:
+            recompute_trade_metrics(state)
+            save_trade_history(state.trade_history)
+            logger.info("[SETTLEMENT] Updated realized PnL for %s trade(s)", changed)
+        return changed
+
+    async def redeem_open_trades_once(
+        redeemer: PolymarketRedeemer | None = None,
+        *,
+        sync_first: bool = True,
+    ) -> dict[str, int | str]:
+        settled = await sync_resolved_trade_pnl() if sync_first else 0
+        if not REDEMPTION_ENABLED:
+            return {"attempted": 0, "redeemed": 0, "settled": settled, "errors": 0, "error": "Redemption is disabled."}
+
+        owns_redeemer = redeemer is None
+        if redeemer is None:
+            try:
+                redeemer = await asyncio.to_thread(PolymarketRedeemer)
+            except Exception as e:
+                logger.warning("[REDEEM] Could not initialize redeemer: %s", e)
+                return {"attempted": 0, "redeemed": 0, "settled": settled, "errors": 1, "error": str(e)}
+
+        attempted = 0
+        redeemed = 0
+        errors = 0
+        for trade in list(state.trade_history):
+            if trade.redemption_tx:
+                continue
+            if not trade.condition_id:
+                trade.redemption_error = "missing condition_id"
+                trade.redemption_checked_ms = now_ms()
+                errors += 1
+                continue
+            if not trade.token_id_up or not trade.token_id_down:
+                trade.redemption_error = "missing token IDs"
+                trade.redemption_checked_ms = now_ms()
+                errors += 1
+                continue
+
+            attempted += 1
+            try:
+                result = await asyncio.to_thread(
+                    redeemer.redeem,
+                    condition_id=trade.condition_id,
+                    token_id_up=trade.token_id_up,
+                    token_id_down=trade.token_id_down,
+                    neg_risk=trade.neg_risk,
+                    wait_for_receipt=False,
+                )
+                trade.redemption_checked_ms = now_ms()
+                if result.redeemed:
+                    trade.redemption_tx = result.tx_hash
+                    trade.settled = True
+                    trade.redemption_error = ""
+                    redeemed += 1
+                    logger.info("[REDEEM] Trade redeemed tx=%s", result.tx_hash)
+                else:
+                    trade.redemption_error = result.reason
+                    if result.reason == "no CTF token balance to redeem" and trade.pnl != 0:
+                        trade.settled = True
+                    logger.debug("[REDEEM] Trade not redeemable: %s", result.reason)
+            except Exception as e:
+                trade.redemption_checked_ms = now_ms()
+                trade.redemption_error = str(e)
+                errors += 1
+                logger.warning("[REDEEM] Redemption check failed: %s", e)
+
+        if attempted or settled or errors:
+            recompute_trade_metrics(state)
+            save_trade_history(state.trade_history)
+        if owns_redeemer:
+            dashboard.broadcast(dashboard._state_snapshot())
+        return {"attempted": attempted, "redeemed": redeemed, "settled": settled, "errors": errors}
+
     # Initialize dashboard
-    dashboard = Dashboard(state, host=DASHBOARD_HOST, port=DASHBOARD_PORT)
+    dashboard = Dashboard(state, host=DASHBOARD_HOST, port=DASHBOARD_PORT, redeem_callback=redeem_open_trades_once)
     dashboard_task = asyncio.create_task(dashboard.start())
     logger.info(f"[DASHBOARD] Started on http://{DASHBOARD_HOST}:{DASHBOARD_PORT}")
 
@@ -351,6 +442,15 @@ async def main() -> None:
 
     eval_task = asyncio.create_task(evaluation_loop())
 
+    async def settlement_loop() -> None:
+        logger.info("[SETTLEMENT] Background resolved-PnL monitor started")
+        while True:
+            await asyncio.sleep(REDEMPTION_POLL_SECS)
+            await sync_resolved_trade_pnl()
+            dashboard.broadcast(dashboard._state_snapshot())
+
+    settlement_task = asyncio.create_task(settlement_loop())
+
     async def redemption_loop() -> None:
         if not REDEMPTION_ENABLED:
             logger.info("[REDEEM] Disabled by REDEMPTION_ENABLED=false")
@@ -365,40 +465,7 @@ async def main() -> None:
         logger.info("[REDEEM] Background redemption monitor started")
         while True:
             await asyncio.sleep(REDEMPTION_POLL_SECS)
-            for trade in list(state.trade_history):
-                if trade.settled or trade.redemption_tx:
-                    continue
-                if not trade.condition_id:
-                    trade.redemption_error = "missing condition_id"
-                    trade.redemption_checked_ms = now_ms()
-                    continue
-
-                try:
-                    result = await asyncio.to_thread(
-                        redeemer.redeem,
-                        condition_id=trade.condition_id,
-                        token_id_up=trade.token_id_up,
-                        token_id_down=trade.token_id_down,
-                        neg_risk=trade.neg_risk,
-                        wait_for_receipt=False,
-                    )
-                    trade.redemption_checked_ms = now_ms()
-                    if result.redeemed:
-                        trade.redemption_tx = result.tx_hash
-                        trade.settled = True
-                        trade.redemption_error = ""
-                        save_trade_history(state.trade_history)
-                        logger.info("[REDEEM] Trade redeemed tx=%s", result.tx_hash)
-                    else:
-                        trade.redemption_error = result.reason
-                        save_trade_history(state.trade_history)
-                        logger.debug("[REDEEM] Trade not redeemable: %s", result.reason)
-                except Exception as e:
-                    trade.redemption_checked_ms = now_ms()
-                    trade.redemption_error = str(e)
-                    save_trade_history(state.trade_history)
-                    logger.warning("[REDEEM] Redemption check failed: %s", e)
-
+            await redeem_open_trades_once(redeemer, sync_first=False)
             dashboard.broadcast(dashboard._state_snapshot())
 
     redemption_task = asyncio.create_task(redemption_loop())
@@ -411,6 +478,7 @@ async def main() -> None:
             eval_task,
             dashboard_task,
             fallback_task,
+            settlement_task,
             redemption_task,
             wallet_task,
         )

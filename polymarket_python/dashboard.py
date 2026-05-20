@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 from pathlib import Path
 
@@ -23,10 +24,17 @@ class Dashboard:
     Serves a simple HTML dashboard and broadcasts state updates via WebSocket.
     """
 
-    def __init__(self, state: AppState, host: str = "0.0.0.0", port: int = 8080):
+    def __init__(
+        self,
+        state: AppState,
+        host: str = "0.0.0.0",
+        port: int = 8080,
+        redeem_callback: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+    ):
         self.state = state
         self.host = host
         self.port = port
+        self.redeem_callback = redeem_callback
         self.app = FastAPI(title="Polymarket BTC Bot")
         self._ws_clients: list[WebSocket] = []
         self._runner: uvicorn.Server | None = None
@@ -99,6 +107,14 @@ class Dashboard:
         async def get_state() -> dict[str, Any]:
             return self._state_snapshot()
 
+        @self.app.post("/redeem")
+        async def redeem() -> dict[str, Any]:
+            if self.redeem_callback is None:
+                return {"error": "Redemption is not available in this process."}
+            result = await self.redeem_callback()
+            self.broadcast(self._state_snapshot())
+            return result
+
         @self.app.get("/trades.csv")
         async def get_trades_csv():
             path = Path(TRADE_HISTORY_CSV)
@@ -141,6 +157,7 @@ class Dashboard:
                 "redemption_tx": t.redemption_tx,
                 "redemption_error": t.redemption_error,
                 "redemption_checked_ms": t.redemption_checked_ms,
+                "status": self._trade_status(t),
                 "order_id": t.order_id,
                 "signal_reason": t.signal_reason,
                 "signal_trend": t.signal_trend,
@@ -246,15 +263,28 @@ class Dashboard:
             return trade.size
         return (trade.size / trade.price) * odds
 
+    def _pending_settlement_value(self, trade: Trade) -> float:
+        if trade.settled and not trade.redemption_tx:
+            return max(trade.size + trade.pnl, 0.0)
+        return 0.0
+
     def _trade_pnl(self, trade: Trade) -> float:
         if trade.settled or trade.redemption_tx:
             return trade.pnl
         return self._open_trade_value(trade) - trade.size
 
+    def _trade_status(self, trade: Trade) -> str:
+        if trade.redemption_tx:
+            return "Redeemed"
+        if trade.settled:
+            return "Won" if trade.pnl > 0 else "Lost" if trade.pnl < 0 else "Resolved"
+        return "Open"
+
     def _total_pnl(self, trade_pnls: dict[int, float]) -> float:
         if self.state.initial_balance > 0 and self.state.wallet_pusd_balance is not None:
             open_value = sum(self._open_trade_value(t) for t in self.state.trade_history)
-            return (self.state.current_balance + open_value) - self.state.initial_balance
+            pending_settlement = sum(self._pending_settlement_value(t) for t in self.state.trade_history)
+            return (self.state.current_balance + open_value + pending_settlement) - self.state.initial_balance
         if trade_pnls:
             return sum(trade_pnls.values())
         return self.state.total_pnl
@@ -318,6 +348,8 @@ class Dashboard:
     .control-field input, .control-field select { width: 100%; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 7px 9px; font-size: 13px; }
     .control-btn { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .control-btn:hover { background: #2ea043; }
+    .control-btn.secondary { background: #1f6feb; }
+    .control-btn.secondary:hover { background: #388bfd; }
     .control-status { min-height: 16px; color: #8b949e; font-size: 12px; margin-top: 8px; }
   </style>
 </head>
@@ -453,7 +485,11 @@ class Dashboard:
 
   <div class="section-title">Trade History</div>
   <div class="card table-wrap">
-    <div class="small-val" style="margin-bottom: 8px;"><a href="/trades.csv" style="color:#58a6ff;">Download CSV</a></div>
+    <div class="small-val" style="margin-bottom: 8px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <a href="/trades.csv" style="color:#58a6ff;">Download CSV</a>
+      <button class="control-btn secondary" type="button" onclick="redeemTrades()">Redeem Bets</button>
+      <span id="redeem-status" style="color:#8b949e;">--</span>
+    </div>
     <table id="trade-table" style="font-size: 12px;">
       <thead>
         <tr style="border-bottom: 1px solid #30363d;">
@@ -633,6 +669,29 @@ class Dashboard:
       }
     }
 
+    async function redeemTrades() {
+      const status = document.getElementById('redeem-status');
+      status.textContent = 'Redeeming...';
+      status.className = '';
+      try {
+        const resp = await fetch('/redeem', { method: 'POST' });
+        const json = await resp.json();
+        if (json.error) {
+          status.textContent = json.error;
+          status.className = 'down';
+          return;
+        }
+        const redeemed = Number(json.redeemed || 0);
+        const attempted = Number(json.attempted || 0);
+        const settled = Number(json.settled || 0);
+        status.textContent = `attempted ${attempted}, redeemed ${redeemed}, settled ${settled}`;
+        status.className = redeemed || settled ? 'up' : 'neutral';
+      } catch (e) {
+        status.textContent = 'Redeem request failed';
+        status.className = 'down';
+      }
+    }
+
     function updatePositionSizeUI(config) {
       if (!config) return;
       const activeId = document.activeElement ? document.activeElement.id : '';
@@ -772,7 +831,8 @@ class Dashboard:
           const time = t.time ? formatTime(t.time) : '--';
           const cls = t.direction === 'UP' ? 'up' : 'down';
           const pnlStr = t.pnl !== 0 ? ((t.pnl >= 0 ? '+$' : '-$') + Math.abs(t.pnl).toFixed(2)) : '--';
-          const redeemText = t.redemption_tx ? shortAddress(t.redemption_tx) : (t.redemption_error || (t.settled ? 'Settled' : 'Open'));
+          const status = t.status || (t.settled ? 'Resolved' : 'Open');
+          const redeemText = t.redemption_tx ? shortAddress(t.redemption_tx) : (t.redemption_error || status);
           const market = t.market_slug ? t.market_slug.replace('btc-updown-5m-', '') : '--';
           const signal = t.signal_reason || t.signal_trend || '--';
           return `<tr style="border-bottom: 1px solid #21262d;">

@@ -16,5 +16,24 @@ services:
     volumes:
       - bot-data:/app/data
 
+  dashboard-sim:
+    profiles:
+      - sim
+    build:
+      context: .
+    image: polymarket-bot:latest
+    container_name: polymarket-dashboard-sim
+    restart: unless-stopped
+    environment:
+      DASHBOARD_HOST: 0.0.0.0
+      SIM_DASHBOARD_PORT: 8082
+      TRADE_HISTORY_CSV: /app/data/sim_trade_history.csv
+    ports:
+      - "8082:8082"
+    volumes:
+      - bot-sim-data:/app/data
+    command: ["python", "run_sim_dashboard.py"]
+
 volumes:
   bot-data:
+  bot-sim-data:

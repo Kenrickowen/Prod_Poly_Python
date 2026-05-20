@@ -9,6 +9,20 @@ cd /Users/frederickmarvel/PolyRustBot/Prod_Poly_Python
 docker compose up -d --build
 ```
 
+If your server says `unknown shorthand flag: 'd' in -d`, it probably does not have the Docker Compose plugin installed. Use the legacy command if it exists:
+
+```bash
+docker-compose up -d --build
+```
+
+Or install the Compose plugin on Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker-compose-plugin
+docker compose version
+```
+
 Open:
 
 ```text
@@ -27,6 +41,34 @@ Stop:
 docker compose down
 ```
 
+## Safe Dashboard Test
+
+Use the simulation dashboard to test the web UI without trading, wallet signing, or real redemption.
+
+Docker Compose v2:
+
+```bash
+docker compose --profile sim up -d --build dashboard-sim
+```
+
+Legacy Docker Compose:
+
+```bash
+docker-compose --profile sim up -d --build dashboard-sim
+```
+
+Open:
+
+```text
+http://localhost:8082
+```
+
+This service runs `run_sim_dashboard.py`, uses fake balances/trades, and exposes the `Redeem Bets` button against simulated data only. The normal command below still runs the real bot as usual:
+
+```bash
+docker-compose up -d --build
+```
+
 ## Remote Server
 
 Copy the project to the server, then create `.env` on the server with your real wallet/API/RPC values. Do not bake `.env` into the image.
@@ -34,6 +76,12 @@ Copy the project to the server, then create `.env` on the server with your real 
 ```bash
 cd Prod_Poly_Python
 docker compose up -d --build
+```
+
+If `docker compose` is unavailable, use:
+
+```bash
+docker-compose up -d --build
 ```
 
 If the server has a firewall, allow TCP `8080`, or put this behind a reverse proxy/VPN.
