@@ -65,7 +65,9 @@ class Trader:
             f"token_id={token_id}, reason={signal.reason}"
         )
 
-        side = "BUY" if direction == SignalDirection.UP else "SELL"
+        # A DOWN bet is opened by buying the DOWN outcome token. Selling the
+        # DOWN token only closes existing inventory and can fail when none is held.
+        side = "BUY"
         result = await self.client.place_market_order(token_id, side, spend_usd)
 
         if result:
