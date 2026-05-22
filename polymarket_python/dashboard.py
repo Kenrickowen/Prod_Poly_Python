@@ -141,13 +141,15 @@ class Dashboard:
         # Serialize trade history
         trade_history = []
         for t in self.state.trade_history:
+            trade_pnl = trade_pnls[id(t)]
             trade_history.append({
                 "time": t.timestamp_ms,
                 "direction": t.direction.value,
+                "outcome_direction": self._trade_outcome_direction(t, trade_pnl),
                 "token_id": t.token_id,
                 "price": t.price,
                 "size": t.size,
-                "pnl": trade_pnls[id(t)],
+                "pnl": trade_pnl,
                 "settled": t.settled,
                 "market_slug": t.market_slug,
                 "condition_id": t.condition_id,
@@ -280,11 +282,20 @@ class Dashboard:
             return "Won" if trade.pnl > 0 else "Lost" if trade.pnl < 0 else "Resolved"
         return "Open"
 
+    def _opposite_direction(self, direction: str) -> str:
+        return "DOWN" if direction == "UP" else "UP"
+
+    def _trade_outcome_direction(self, trade: Trade, pnl: float) -> str:
+        if not trade.settled and not trade.redemption_tx:
+            return "Pending"
+        direction = trade.direction.value
+        if pnl > 0:
+            return direction
+        if pnl < 0:
+            return self._opposite_direction(direction)
+        return "Resolved"
+
     def _total_pnl(self, trade_pnls: dict[int, float]) -> float:
-        if self.state.initial_balance > 0 and self.state.wallet_pusd_balance is not None:
-            open_value = sum(self._open_trade_value(t) for t in self.state.trade_history)
-            pending_settlement = sum(self._pending_settlement_value(t) for t in self.state.trade_history)
-            return (self.state.current_balance + open_value + pending_settlement) - self.state.initial_balance
         if trade_pnls:
             return sum(trade_pnls.values())
         return self.state.total_pnl
@@ -494,7 +505,8 @@ class Dashboard:
       <thead>
         <tr style="border-bottom: 1px solid #30363d;">
           <th style="text-align:left; padding: 4px 0; color:#8b949e; font-weight: normal;">Time</th>
-          <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Dir</th>
+          <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Bet</th>
+          <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Outcome</th>
           <th style="text-align:left; padding: 4px 8px; color:#8b949e; font-weight: normal;">Market</th>
           <th style="text-align:right; padding: 4px 0; color:#8b949e; font-weight: normal;">Entry Odds</th>
           <th style="text-align:right; padding: 4px 0; color:#8b949e; font-weight: normal;">Size</th>
@@ -504,7 +516,7 @@ class Dashboard:
         </tr>
       </thead>
       <tbody id="trade-body">
-        <tr><td colspan="8" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>
+        <tr><td colspan="9" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>
       </tbody>
     </table>
   </div>
@@ -825,12 +837,14 @@ class Dashboard:
       const tbody = document.getElementById('trade-body');
       const history = d.trade_history || [];
       if (history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="color:#8b949e; padding: 8px 0;">No trades yet</td></tr>';
       } else {
         tbody.innerHTML = history.slice(0, 20).map(t => {
           const time = t.time ? formatTime(t.time) : '--';
           const cls = t.direction === 'UP' ? 'up' : 'down';
-          const pnlStr = t.pnl !== 0 ? ((t.pnl >= 0 ? '+$' : '-$') + Math.abs(t.pnl).toFixed(2)) : '--';
+          const outcome = t.outcome_direction || (t.settled ? 'Resolved' : 'Pending');
+          const outcomeCls = outcome === 'UP' ? 'up' : outcome === 'DOWN' ? 'down' : '';
+          const pnlStr = (t.pnl !== 0 || t.settled || t.redemption_tx) ? ((t.pnl >= 0 ? '+$' : '-$') + Math.abs(t.pnl).toFixed(2)) : '--';
           const status = t.status || (t.settled ? 'Resolved' : 'Open');
           const redeemText = t.redemption_tx ? shortAddress(t.redemption_tx) : (t.redemption_error || status);
           const market = t.market_slug ? t.market_slug.replace('btc-updown-5m-', '') : '--';
@@ -838,6 +852,7 @@ class Dashboard:
           return `<tr style="border-bottom: 1px solid #21262d;">
             <td style="color:#8b949e; padding: 5px 0;">${time}</td>
             <td style="padding: 5px 8px;"><span class="${cls}" style="font-weight:600;font-size:12px;">${t.direction}</span></td>
+            <td style="padding: 5px 8px;"><span class="${outcomeCls}" style="font-weight:600;font-size:12px;">${outcome}</span></td>
             <td style="padding: 5px 8px; font-family: monospace;">${market}</td>
             <td style="text-align:right; font-family: monospace; padding: 5px 0;">${t.price ? t.price.toFixed(4) : '--'}</td>
             <td style="text-align:right; font-family: monospace; padding: 5px 0;">$${t.size ? t.size.toFixed(2) : '--'}</td>
