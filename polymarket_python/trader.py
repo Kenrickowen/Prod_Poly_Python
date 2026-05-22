@@ -42,6 +42,9 @@ class Trader:
 
     async def on_signal(self, state: AppState, signal: Signal) -> bool:
         """Execute trade based on signal. Returns True on success."""
+        if signal.paper_only:
+            return await self.record_paper_trade(state, signal)
+
         direction = signal.direction
         token_id = self.token_id_up if direction == SignalDirection.UP else self.token_id_down
 
@@ -107,3 +110,53 @@ class Trader:
         else:
             logger.error(f"[TRADER] Trade FAILED — {direction.value}")
             return False
+
+    async def record_paper_trade(self, state: AppState, signal: Signal) -> bool:
+        """Record a simulated trade without sending an order to Polymarket."""
+        direction = signal.direction
+        token_id = self.token_id_up if direction == SignalDirection.UP else self.token_id_down
+        if not token_id:
+            logger.error("[TRADER] No token_id for paper %s trade", direction.value)
+            return False
+
+        odds = state.poly_up_odds if direction == SignalDirection.UP else state.poly_down_odds
+        if odds is None or odds <= 0:
+            odds = signal.market_probability if signal.market_probability > 0 else 0.5
+
+        spend_usd = calculate_position_size_usd(state)
+        if spend_usd <= 0:
+            logger.warning("[TRADER] Position size is zero; skipping paper trade")
+            return False
+
+        timestamp_ms = int(time.time() * 1000)
+        trade = Trade(
+            timestamp_ms=timestamp_ms,
+            direction=direction,
+            token_id=token_id,
+            price=float(odds),
+            size=spend_usd,
+            condition_id=state.poly_market_condition_id,
+            market_slug=state.poly_market_slug,
+            order_id=f"paper-{timestamp_ms}-{direction.value.lower()}",
+            signal_reason=signal.reason,
+            signal_trend=signal.trend,
+            signal_ptb=signal.ptb_used,
+            token_id_up=self.token_id_up,
+            token_id_down=self.token_id_down,
+            neg_risk=state.poly_market_neg_risk,
+            paper_trade=True,
+            pnl=0.0,
+            settled=False,
+        )
+        state.add_trade(trade)
+        append_trade(trade)
+        state.window.traded = True
+        state.window.signal_evaluated = True
+        logger.info(
+            "[TRADER] Paper trade recorded — %s edge=%.4f fair=%.4f market=%.4f",
+            direction.value,
+            signal.edge,
+            signal.fair_probability,
+            signal.market_probability,
+        )
+        return True

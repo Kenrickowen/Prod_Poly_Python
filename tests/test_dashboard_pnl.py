@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+import polymarket_python.dashboard as dashboard_module
+from fastapi.testclient import TestClient
+
 from polymarket_python.dashboard import Dashboard
 from polymarket_python.models import AppState, SignalDirection, Trade
 
@@ -104,6 +107,33 @@ class DashboardPnlTests(unittest.TestCase):
 
         self.assertEqual(snapshot["trade_history"][0]["outcome_direction"], "UP")
         self.assertEqual(snapshot["trade_history"][1]["outcome_direction"], "DOWN")
+
+    def test_dashboard_accepts_momentum_strategy_mode(self) -> None:
+        state = AppState()
+        client = TestClient(Dashboard(state).app)
+
+        response = client.post(
+            "/config/strategy_mode",
+            content=b"momentum",
+            headers={"content-type": "text/plain"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["strategy_mode"], "momentum")
+        self.assertEqual(state.strategy_mode, "momentum")
+
+    def test_trades_csv_exports_from_trade_store(self) -> None:
+        original = dashboard_module.export_trade_history_csv
+        dashboard_module.export_trade_history_csv = lambda: "timestamp_ms,direction\n1,UP\n"
+        try:
+            client = TestClient(Dashboard(AppState()).app)
+
+            response = client.get("/trades.csv")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("1,UP", response.text)
+        finally:
+            dashboard_module.export_trade_history_csv = original
 
 
 if __name__ == "__main__":

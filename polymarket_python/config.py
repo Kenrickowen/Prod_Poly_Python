@@ -101,3 +101,17 @@ DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8080"))
 
 # ─── Persistence ─────────────────────────────────────────────────────────────
 TRADE_HISTORY_CSV = os.getenv("TRADE_HISTORY_CSV", "data/trade_history.csv")
+TRADE_STORE_BACKEND = os.getenv("TRADE_STORE_BACKEND", "csv").lower()
+MYSQL_HOST = os.getenv("MYSQL_HOST", "")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "")
+MYSQL_USER = os.getenv("MYSQL_USER", "")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+
+# ─── Momentum mispricing strategy ───────────────────────────────────────────
+MOMENTUM_EDGE_THRESHOLD = float(os.getenv("MOMENTUM_EDGE_THRESHOLD", "0.05"))
+MOMENTUM_MAX_SPREAD = float(os.getenv("MOMENTUM_MAX_SPREAD", "0.01"))
+MOMENTUM_MIN_ELAPSED_SECS = int(os.getenv("MOMENTUM_MIN_ELAPSED_SECS", "60"))
+MOMENTUM_EXIT_BEFORE_CLOSE_SECS = int(os.getenv("MOMENTUM_EXIT_BEFORE_CLOSE_SECS", "30"))
+MOMENTUM_CHAINLINK_MAX_DEVIATION = float(os.getenv("MOMENTUM_CHAINLINK_MAX_DEVIATION", "0.002"))
+MOMENTUM_PAPER_ONLY = os.getenv("MOMENTUM_PAPER_ONLY", "true").lower() in {"1", "true", "yes", "on"}

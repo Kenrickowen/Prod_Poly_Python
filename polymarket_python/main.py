@@ -46,6 +46,7 @@ from polymarket_python.scheduler import (
 )
 from polymarket_python.trader import Trader
 from polymarket_python.dashboard import Dashboard
+from polymarket_python.chainlink_client import fetch_btc_price as fetch_chainlink_btc_price
 from polymarket_python.polymarket_public_client import fetch_btc_market_by_slug, fetch_current_btc_odds
 from polymarket_python.redemption import PolymarketRedeemer, now_ms
 from polymarket_python.runtime_config import load_position_size
@@ -237,6 +238,8 @@ async def main() -> None:
         redeemed = 0
         errors = 0
         for trade in list(state.trade_history):
+            if trade.paper_trade:
+                continue
             if trade.redemption_tx:
                 continue
             if not trade.condition_id:
@@ -357,7 +360,18 @@ async def main() -> None:
 
     wallet_task = asyncio.create_task(poll_wallet_balances())
 
-    chainlink_task = asyncio.create_task(asyncio.sleep(float("inf")))  # placeholder
+    async def poll_chainlink_price() -> None:
+        while True:
+            try:
+                price = await asyncio.to_thread(fetch_chainlink_btc_price)
+                if price and price > 0:
+                    state.chainlink_price = price
+                    dashboard.broadcast(dashboard._state_snapshot())
+            except Exception as e:
+                logger.warning("[CHAINLINK] poll failed: %s", e)
+            await asyncio.sleep(10)
+
+    chainlink_task = asyncio.create_task(poll_chainlink_price())
 
     # Main evaluation loop
     logger.info("[MAIN] Entering main loop")
@@ -412,10 +426,12 @@ async def main() -> None:
                 odds_up = await poly_client.get_odds(token_id_up)
             if odds_up is not None:
                 state.poly_up_odds = float(odds_up)
+                state.last_poly_odds_time_ms = now_ms
             if odds_down is None:
                 odds_down = await poly_client.get_odds(token_id_down)
             if odds_down is not None:
                 state.poly_down_odds = float(odds_down)
+                state.last_poly_odds_time_ms = now_ms
 
             # Evaluate signal
             if not state.window.signal_evaluated and not state.window.traded:

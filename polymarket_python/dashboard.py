@@ -5,15 +5,14 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
-from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response
 import uvicorn
 
-from polymarket_python.config import TRADE_HISTORY_CSV
 from polymarket_python.models import AppState, Trade
 from polymarket_python.runtime_config import save_position_size
+from polymarket_python.trade_store import export_trade_history_csv
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +66,8 @@ class Dashboard:
         @self.app.post("/config/strategy_mode")
         async def set_strategy_mode(body: bytes = Body(..., media_type="text/plain")) -> dict[str, str]:
             mode = body.decode("utf-8").strip()
-            if mode not in ("legacy", "t3"):
-                return {"error": "Invalid mode. Use 't3' or 'legacy'."}
+            if mode not in ("legacy", "t3", "momentum"):
+                return {"error": "Invalid mode. Use 't3', 'legacy', or 'momentum'."}
             self.state.strategy_mode = mode
             return {"strategy_mode": mode}
 
@@ -117,15 +116,11 @@ class Dashboard:
 
         @self.app.get("/trades.csv")
         async def get_trades_csv():
-            path = Path(TRADE_HISTORY_CSV)
-            if not path.is_absolute():
-                path = Path(__file__).resolve().parent.parent / path
-            if not path.exists():
-                return Response(
-                    "timestamp_ms,direction,market_slug,condition_id,token_id,price,size,pnl,settled,redemption_tx\n",
-                    media_type="text/csv",
-                )
-            return FileResponse(path, media_type="text/csv", filename="trade_history.csv")
+            return Response(
+                export_trade_history_csv(),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=trade_history.csv"},
+            )
 
     def _state_snapshot(self) -> dict[str, Any]:
         """Serialize current app state for JSON response / WebSocket."""
@@ -156,6 +151,7 @@ class Dashboard:
                 "token_id_up": t.token_id_up,
                 "token_id_down": t.token_id_down,
                 "neg_risk": t.neg_risk,
+                "paper_trade": t.paper_trade,
                 "redemption_tx": t.redemption_tx,
                 "redemption_error": t.redemption_error,
                 "redemption_checked_ms": t.redemption_checked_ms,
@@ -231,6 +227,7 @@ class Dashboard:
             "last_poly_odds_time_ms": self.state.last_poly_odds_time_ms,
             "strategy_mode": self.state.strategy_mode,
             "position_size": self._position_size_config(),
+            "momentum": self.state.momentum_diagnostics,
             "klines": klines,
             "trade_history": trade_history,
         }
@@ -372,6 +369,7 @@ class Dashboard:
     <select id="strategy-select" onchange="setStrategy(this.value)" style="background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer;">
       <option value="t3">T3 (Candle 3)</option>
       <option value="legacy">Legacy</option>
+      <option value="momentum">Momentum Mispricing</option>
     </select>
   </div>
   <div class="topbar">
@@ -485,6 +483,18 @@ class Dashboard:
         <button class="control-btn" type="button" onclick="setPositionSize()">Save</button>
       </div>
       <div class="control-status" id="position-status">--</div>
+    </div>
+    <div class="card">
+      <h3>Momentum Mispricing</h3>
+      <table>
+        <tr><td>Fair UP</td><td id="mom-fair-up">--</td></tr>
+        <tr><td>Market UP</td><td id="mom-market-up">--</td></tr>
+        <tr><td>UP Edge</td><td id="mom-up-edge">--</td></tr>
+        <tr><td>DOWN Edge</td><td id="mom-down-edge">--</td></tr>
+        <tr><td>Spread</td><td id="mom-spread">--</td></tr>
+        <tr><td>Chainlink Div</td><td id="mom-chainlink">--</td></tr>
+        <tr><td>Mode</td><td id="mom-mode">--</td></tr>
+      </table>
     </div>
   </div>
 
@@ -736,6 +746,11 @@ class Dashboard:
         indicator.className = 'strategy-indicator';
         indicator.style.background = '#238636';
         if (select) select.value = 't3';
+      } else if (mode === 'momentum') {
+        indicator.textContent = 'MOMENTUM';
+        indicator.className = 'strategy-indicator';
+        indicator.style.background = '#1f6feb';
+        if (select) select.value = 'momentum';
       } else {
         // 'current' — not shown in dropdown but supported in code
         indicator.textContent = 'CURRENT';
@@ -831,6 +846,16 @@ class Dashboard:
       document.getElementById('signal-check').textContent = signalStatus.last_check_ms ? formatTime(signalStatus.last_check_ms) : '--';
       document.getElementById('signal-status').textContent = signalStatus.reason || signalStatus.status || '--';
 
+      const mom = d.momentum || {};
+      const pct = (v) => (v === null || v === undefined || Number.isNaN(Number(v))) ? '--' : (Number(v) * 100).toFixed(2) + '%';
+      document.getElementById('mom-fair-up').textContent = pct(mom.fair_up);
+      document.getElementById('mom-market-up').textContent = pct(mom.market_up);
+      document.getElementById('mom-up-edge').textContent = pct(mom.up_edge);
+      document.getElementById('mom-down-edge').textContent = pct(mom.down_edge);
+      document.getElementById('mom-spread').textContent = pct(mom.spread);
+      document.getElementById('mom-chainlink').textContent = pct(mom.chainlink_divergence);
+      document.getElementById('mom-mode').textContent = mom.paper_only === false ? 'LIVE' : 'PAPER';
+
       drawKlines(d.klines || []);
 
       // Trade history
@@ -848,7 +873,7 @@ class Dashboard:
           const status = t.status || (t.settled ? 'Resolved' : 'Open');
           const redeemText = t.redemption_tx ? shortAddress(t.redemption_tx) : (t.redemption_error || status);
           const market = t.market_slug ? t.market_slug.replace('btc-updown-5m-', '') : '--';
-          const signal = t.signal_reason || t.signal_trend || '--';
+          const signal = (t.paper_trade ? 'PAPER · ' : '') + (t.signal_reason || t.signal_trend || '--');
           return `<tr style="border-bottom: 1px solid #21262d;">
             <td style="color:#8b949e; padding: 5px 0;">${time}</td>
             <td style="padding: 5px 8px;"><span class="${cls}" style="font-weight:600;font-size:12px;">${t.direction}</span></td>

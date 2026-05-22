@@ -87,6 +87,10 @@ class Signal:
     trend: str = ""
     atr: float = 0.0
     vol_sma: float = 0.0
+    paper_only: bool = False
+    fair_probability: float = 0.0
+    market_probability: float = 0.0
+    edge: float = 0.0
 
 
 @dataclass
@@ -117,6 +121,7 @@ class Trade:
     token_id_up: str = ""
     token_id_down: str = ""
     neg_risk: bool = False
+    paper_trade: bool = False
     pnl: float = 0.0
     settled: bool = False
     redemption_tx: str = ""
@@ -166,7 +171,8 @@ class AppState:
     last_signal_check_ms: int = 0
     last_signal_status: str = ""
     last_signal_reason: str = ""
-    strategy_mode: str = "t3"  # "t3" | "legacy" | "current"
+    strategy_mode: str = "t3"  # "t3" | "legacy" | "current" | "momentum"
+    momentum_diagnostics: dict = field(default_factory=dict)
 
     def push_kline(self, candle: Candle) -> None:
         existing = next((i for i, c in enumerate(self.klines) if c.open_time_ms == candle.open_time_ms), -1)
